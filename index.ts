@@ -7,7 +7,8 @@ import {
 	PutCommandInput,
 	QueryCommand,
 	QueryCommandInput,
-	UpdateCommand
+	UpdateCommand,
+	TransactWriteCommand
 } from '@aws-sdk/lib-dynamodb';
 import {
 	AttributeDefinition,
@@ -94,11 +95,13 @@ const PUT_OPTS: {
 };
 
 const UPDATE_OPTS: SharedOptions & {
+	allowUpdatePartitionAndSort?: boolean;
 	conditionExpression?: string;
 	expression?: string;
 	updateFn?: (item: Dict) => Dict | null;
 	upsert?: boolean;
 } = {
+	allowUpdatePartitionAndSort: false,
 	attributeNames: {},
 	attributeValues: {},
 	conditionExpression: '',
@@ -351,42 +354,42 @@ class Dynamodb {
 			queryParams.IndexName = opts.index;
 		}
 
+		queryParams = {
+			...queryParams,
+			ExpressionAttributeNames: {
+				...queryParams.ExpressionAttributeNames,
+				'#partition': schema.partition
+			},
+			ExpressionAttributeValues: {
+				...queryParams.ExpressionAttributeValues,
+				':partition': item[schema.partition]
+			}
+		};
+
 		if (index) {
 			if (index !== 'sort' && !queryParams.IndexName) {
 				queryParams.IndexName = index;
 			}
 
-			if (opts.prefix) {
-				queryParams.KeyConditionExpression += ' AND begins_with(#sort, :sort)';
-			} else {
-				queryParams.KeyConditionExpression += ' AND #sort = :sort';
-			}
+			if (schema.sort) {
+				if (opts.prefix) {
+					queryParams.KeyConditionExpression += ' AND begins_with(#sort, :sort)';
+				} else {
+					queryParams.KeyConditionExpression += ' AND #sort = :sort';
+				}
 
-			queryParams = {
-				...queryParams,
-				ExpressionAttributeNames: {
-					...queryParams.ExpressionAttributeNames,
-					'#partition': schema.partition,
-					'#sort': schema.sort
-				},
-				ExpressionAttributeValues: {
-					...queryParams.ExpressionAttributeValues,
-					':partition': item[schema.partition],
-					':sort': item[schema.sort]
-				}
-			};
-		} else {
-			queryParams = {
-				...queryParams,
-				ExpressionAttributeNames: {
-					...queryParams.ExpressionAttributeNames,
-					'#partition': this.schema.partition
-				},
-				ExpressionAttributeValues: {
-					...queryParams.ExpressionAttributeValues,
-					':partition': item[this.schema.partition]
-				}
-			};
+				queryParams = {
+					...queryParams,
+					ExpressionAttributeNames: {
+						...queryParams.ExpressionAttributeNames,
+						'#sort': schema.sort
+					},
+					ExpressionAttributeValues: {
+						...queryParams.ExpressionAttributeValues,
+						':sort': item[schema.sort]
+					}
+				};
+			}
 		}
 
 		if (_.size(opts.attributeNames)) {
@@ -521,6 +524,24 @@ class Dynamodb {
 			}
 		}
 
+		// test if has only partition key
+		if (_.has(item, this.schema.partition)) {
+			return {
+				index: '',
+				schema: {
+					partition: this.schema.partition,
+					sort: ''
+				}
+			};
+		}
+
+		// test if match any index's partition key
+		for (const { name, partition } of this.indexes) {
+			if (_.has(item, partition)) {
+				return { index: name, schema: { partition, sort: '' } };
+			}
+		}
+
 		return { index: '', schema: { partition: '', sort: '' } };
 	}
 
@@ -539,17 +560,27 @@ class Dynamodb {
 			conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
 		}
 
+		opts.attributeNames = {
+			...opts.attributeNames,
+			'#__ts': '__ts'
+		};
+
+		opts.attributeValues = {
+			...opts.attributeValues,
+			':__ts': current?.__ts ?? _.now()
+		};
+
 		if (opts.expression) {
 			opts.expression = concatUpdateExpression(opts.expression, 'SET #__ts = :__ts');
-			opts.attributeNames = {
-				...opts.attributeNames,
-				'#__ts': '__ts'
-			};
 
-			opts.attributeValues = {
-				...opts.attributeValues,
-				':__ts': current?.__ts || _.now()
-			};
+			if (!opts.upsert) {
+				conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
+				opts.attributeNames = {
+					...opts.attributeNames,
+					'#__pk': this.schema.partition,
+					'#__ts': '__ts'
+				};
+			}
 
 			const res = await this.client.send(
 				new UpdateCommand({
@@ -577,12 +608,68 @@ class Dynamodb {
 			}
 		}
 
+		if (current && opts.allowUpdatePartitionAndSort) {
+			if (item[this.schema.partition] !== current[this.schema.partition] || item[this.schema.sort] !== current[this.schema.sort]) {
+				return this.updateWithTransaction(item, current, {
+					attributeNames: opts.attributeNames,
+					attributeValues: opts.attributeValues,
+					conditionExpression
+				});
+			}
+		}
+
+		if (!opts.upsert) {
+			conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
+			opts.attributeNames = {
+				...opts.attributeNames,
+				'#__pk': this.schema.partition,
+				'#__ts': '__ts'
+			};
+		}
+
 		return this.put(item, {
-			attributeNames: { ...opts.attributeNames, '#__ts': '__ts' },
-			attributeValues: { ...opts.attributeValues, ':__ts': current?.__ts || _.now() },
+			attributeNames: opts.attributeNames,
+			attributeValues: opts.attributeValues,
 			conditionExpression,
 			overwrite: true
 		});
+	}
+
+	private async updateWithTransaction(item: Dict, current: Dict, opts: typeof UPDATE_OPTS): Promise<Dict> {
+		const deleteParams = {
+			Delete: {
+				Key: {
+					[this.schema.partition]: current[this.schema.partition],
+					[this.schema.sort]: current[this.schema.sort]
+				},
+				TableName: this.table
+			}
+		};
+
+		const putParams: PutCommandInput = {
+			Item: { ...item, __ts: _.now() },
+			TableName: this.table
+		};
+
+		if (opts.conditionExpression) {
+			putParams.ConditionExpression = opts.conditionExpression;
+		}
+
+		if (_.size(opts.attributeNames)) {
+			putParams.ExpressionAttributeNames = opts.attributeNames;
+		}
+
+		if (_.size(opts.attributeValues)) {
+			putParams.ExpressionAttributeValues = opts.attributeValues;
+		}
+
+		await this.client.send(
+			new TransactWriteCommand({
+				TransactItems: [deleteParams, { Put: putParams }]
+			})
+		);
+
+		return item as Dict;
 	}
 
 	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {

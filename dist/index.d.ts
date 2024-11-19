@@ -66,11 +66,13 @@ declare class Dynamodb {
         schema: TableSchema;
     };
     update(item: Dict, opts?: SharedOptions & {
+        allowUpdatePartitionAndSort?: boolean;
         conditionExpression?: string;
         expression?: string;
         updateFn?: (item: Dict) => Dict | null;
         upsert?: boolean;
     }): Promise<Dict>;
+    private updateWithTransaction;
     createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput>;
 }
 export { concatConditionExpression, concatUpdateExpression };

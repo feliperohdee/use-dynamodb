@@ -1,7 +1,7 @@
 import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import Dynamodb, { concatConditionExpression, concatUpdateExpression } from './';
+import Dynamodb, { concatConditionExpression, concatUpdateExpression } from './index';
 
 const createItems = (count: number) => {
 	return _.times(count, i => {
@@ -573,6 +573,31 @@ describe('index', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
+		it('should fetch by global secondary index with partition', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.fetch({
+				gsiPk: 'gsi-pk-0'
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ExpressionAttributeNames: {
+							'#partition': 'gsiPk'
+						},
+						ExpressionAttributeValues: {
+							':partition': 'gsi-pk-0'
+						},
+						IndexName: 'gs-index',
+						KeyConditionExpression: '#partition = :partition',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
 		it('should fetch by custom expression', async () => {
 			const { count, lastEvaluatedKey } = await dynamodb.fetch(
 				{
@@ -982,6 +1007,18 @@ describe('index', () => {
 			});
 		});
 
+		it('should resolve only partition', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				pk: 'pk-0'
+			});
+
+			expect(index).toEqual('');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: ''
+			});
+		});
+
 		it('should resolve by local secondary index', () => {
 			const { index, schema } = dynamodb.optimisticResolveSchema({
 				pk: 'pk-0',
@@ -1005,6 +1042,18 @@ describe('index', () => {
 			expect(schema).toEqual({
 				partition: 'gsiPk',
 				sort: 'gsiSk'
+			});
+		});
+
+		it('should resolve only partition by global secondary index', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				gsiPk: 'gsi-pk-0'
+			});
+
+			expect(index).toEqual('gs-index');
+			expect(schema).toEqual({
+				partition: 'gsiPk',
+				sort: ''
 			});
 		});
 	});
@@ -1078,9 +1127,12 @@ describe('index', () => {
 					sk: 'sk-0'
 				},
 				{
-					attributeNames: { '#__ts': '__ts' },
+					attributeNames: {
+						'#__pk': 'pk',
+						'#__ts': '__ts'
+					},
 					attributeValues: { ':__ts': expect.any(Number) },
-					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__ts)',
+					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
 					overwrite: true
 				}
 			);
@@ -1095,6 +1147,29 @@ describe('index', () => {
 					pk: 'pk-0'
 				})
 			);
+		});
+
+		it('should not update partition and sort', async () => {
+			try {
+				await dynamodb.update(
+					{
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						updateFn: item => {
+							return {
+								...item,
+								pk: 'pk-1',
+								sk: 'sk-1',
+								foo: 'foo-1'
+							};
+						}
+					}
+				);
+			} catch (err) {
+				expect(err.name).toContain('ConditionalCheckFailedException');
+			}
 		});
 
 		it('should upsert', async () => {
@@ -1159,10 +1234,11 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__ts)',
+						ConditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
 						ExpressionAttributeNames: {
 							'#bar': 'bar',
 							'#foo': 'foo',
+							'#__pk': 'pk',
 							'#__ts': '__ts'
 						},
 						ExpressionAttributeValues: {
@@ -1245,6 +1321,112 @@ describe('index', () => {
 					bar: 1,
 					sk: 'sk-1',
 					pk: 'pk-0'
+				})
+			);
+		});
+
+		it('should update partition key with transaction', async () => {
+			const item = await dynamodb.update(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					allowUpdatePartitionAndSort: true,
+					updateFn: item => {
+						return {
+							...item,
+							pk: 'pk-1'
+						};
+					}
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						TransactItems: expect.arrayContaining([
+							expect.objectContaining({
+								Delete: expect.objectContaining({
+									Key: {
+										pk: 'pk-0',
+										sk: 'sk-0'
+									},
+									TableName: 'simple-img-new-spec'
+								})
+							}),
+							expect.objectContaining({
+								Put: expect.objectContaining({
+									Item: expect.objectContaining({
+										pk: 'pk-1',
+										sk: 'sk-0',
+										__ts: expect.any(Number)
+									}),
+									TableName: 'simple-img-new-spec'
+								})
+							})
+						])
+					})
+				})
+			);
+
+			expect(item).toEqual(
+				expect.objectContaining({
+					pk: 'pk-1',
+					sk: 'sk-0'
+				})
+			);
+		});
+
+		it('should update sort key with transaction', async () => {
+			const item = await dynamodb.update(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					allowUpdatePartitionAndSort: true,
+					updateFn: item => {
+						return {
+							...item,
+							sk: 'sk-1'
+						};
+					}
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						TransactItems: expect.arrayContaining([
+							expect.objectContaining({
+								Delete: expect.objectContaining({
+									Key: {
+										pk: 'pk-0',
+										sk: 'sk-0'
+									},
+									TableName: 'simple-img-new-spec'
+								})
+							}),
+							expect.objectContaining({
+								Put: expect.objectContaining({
+									Item: expect.objectContaining({
+										pk: 'pk-0',
+										sk: 'sk-1',
+										__ts: expect.any(Number)
+									}),
+									TableName: 'simple-img-new-spec'
+								})
+							})
+						])
+					})
+				})
+			);
+
+			expect(item).toEqual(
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-1'
 				})
 			);
 		});

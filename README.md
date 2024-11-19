@@ -1,4 +1,4 @@
-#  Use DynamoDB
+# Use DynamoDB
 
 A TypeScript library that provides a simplified interface for interacting with Amazon DynamoDB, using the AWS SDK v3.
 
@@ -82,6 +82,26 @@ const updatedItem = await dynamodb.update(
 	{
 		updateFn: item => ({
 			...item,
+			email: 'newemail@example.com'
+		})
+	}
+);
+```
+
+#### 🔄 Update Item (updating partition and sort)
+
+```typescript
+const updatedItem = await dynamodb.update(
+	{
+		pk: 'user#123',
+		sk: 'profile'
+	},
+	{
+		allowUpdatePartitionAndSort: true,
+		updateFn: item => ({
+			...item,
+			pk: 'user#123__disabled',
+			sk: 'profile',
 			email: 'newemail@example.com'
 		})
 	}
