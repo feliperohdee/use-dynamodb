@@ -13,6 +13,7 @@ import {
 import {
 	AttributeDefinition,
 	CreateTableCommand,
+	CreateTableCommandInput,
 	CreateTableCommandOutput,
 	DescribeTableCommand,
 	DescribeTableCommandOutput,
@@ -749,40 +750,46 @@ class Dynamodb {
 					};
 				}) as AttributeDefinition[];
 
-				// @ts-ignore-next-line
-				return this.client.send(
-					new CreateTableCommand({
-						AttributeDefinitions: _.uniqBy(
-							[
-								{
-									AttributeName: this.schema.sort,
-									AttributeType: 'S'
-								},
-								{
-									AttributeName: this.schema.partition,
-									AttributeType: 'S'
-								},
-								...globalIndexesDefinitions,
-								...localIndexesDefinitions
-							],
-							'AttributeName'
-						),
-						BillingMode: 'PAY_PER_REQUEST',
-						KeySchema: [
-							{
-								AttributeName: this.schema.partition,
-								KeyType: 'HASH'
-							},
+				const commandInput: CreateTableCommandInput = {
+					AttributeDefinitions: _.uniqBy(
+						[
 							{
 								AttributeName: this.schema.sort,
-								KeyType: 'RANGE'
-							}
+								AttributeType: 'S'
+							},
+							{
+								AttributeName: this.schema.partition,
+								AttributeType: 'S'
+							},
+							...globalIndexesDefinitions,
+							...localIndexesDefinitions
 						],
-						GlobalSecondaryIndexes: globalIndexes,
-						LocalSecondaryIndexes: localIndexes,
-						TableName: this.table
-					})
-				);
+						'AttributeName'
+					),
+					BillingMode: 'PAY_PER_REQUEST',
+					KeySchema: [
+						{
+							AttributeName: this.schema.partition,
+							KeyType: 'HASH'
+						},
+						{
+							AttributeName: this.schema.sort,
+							KeyType: 'RANGE'
+						}
+					],
+					TableName: this.table
+				};
+
+				if (_.size(globalIndexes)) {
+					commandInput.GlobalSecondaryIndexes = globalIndexes;
+				}
+
+				if (_.size(localIndexes)) {
+					commandInput.LocalSecondaryIndexes = localIndexes;
+				}
+
+				// @ts-ignore-next-line
+				return this.client.send(new CreateTableCommand(commandInput));
 			}
 		}
 

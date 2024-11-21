@@ -545,8 +545,7 @@ class Dynamodb {
                         AttributeType: index.type
                     };
                 });
-                // @ts-ignore-next-line
-                return this.client.send(new CreateTableCommand({
+                const commandInput = {
                     AttributeDefinitions: _.uniqBy([
                         {
                             AttributeName: this.schema.sort,
@@ -570,10 +569,16 @@ class Dynamodb {
                             KeyType: 'RANGE'
                         }
                     ],
-                    GlobalSecondaryIndexes: globalIndexes,
-                    LocalSecondaryIndexes: localIndexes,
                     TableName: this.table
-                }));
+                };
+                if (_.size(globalIndexes)) {
+                    commandInput.GlobalSecondaryIndexes = globalIndexes;
+                }
+                if (_.size(localIndexes)) {
+                    commandInput.LocalSecondaryIndexes = localIndexes;
+                }
+                // @ts-ignore-next-line
+                return this.client.send(new CreateTableCommand(commandInput));
             }
         }
         return {};
