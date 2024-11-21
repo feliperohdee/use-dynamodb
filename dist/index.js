@@ -354,8 +354,11 @@ class Dynamodb {
         }
         // test if match any index's schema
         for (const { name, partition, sort } of this.indexes) {
+            if (!sort) {
+                continue;
+            }
             if (_.has(item, partition) && _.has(item, sort)) {
-                return { index: name, schema: { partition, sort } };
+                return { index: name, schema: { partition, sort: sort } };
             }
         }
         // test if has only partition key
@@ -489,34 +492,40 @@ class Dynamodb {
                     return index.partition !== this.schema.partition;
                 });
                 const globalIndexes = _.map(gi, index => {
+                    const keySchema = [
+                        {
+                            AttributeName: index.partition,
+                            KeyType: 'HASH'
+                        }
+                    ];
+                    if (index.sort) {
+                        keySchema.push({
+                            AttributeName: index.sort,
+                            KeyType: 'RANGE'
+                        });
+                    }
                     return {
                         IndexName: index.name,
-                        KeySchema: [
-                            {
-                                AttributeName: index.partition,
-                                KeyType: 'HASH'
-                            },
-                            {
-                                AttributeName: index.sort,
-                                KeyType: 'RANGE'
-                            }
-                        ],
+                        KeySchema: keySchema,
                         Projection: {
                             ProjectionType: 'ALL'
                         }
                     };
                 });
                 const globalIndexesDefinitions = _.flatMap(gi, index => {
-                    return [
+                    const definition = [
                         {
                             AttributeName: index.partition,
                             AttributeType: 'S'
-                        },
-                        {
-                            AttributeName: index.sort,
-                            AttributeType: index.type
                         }
                     ];
+                    if (index.sort) {
+                        definition.push({
+                            AttributeName: index.sort,
+                            AttributeType: index.type
+                        });
+                    }
+                    return definition;
                 });
                 const li = _.filter(this.indexes, index => {
                     return index.partition === this.schema.partition;

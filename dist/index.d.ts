@@ -7,8 +7,10 @@ type TableSchema = {
     partition: string;
     sort: string;
 };
-type TableIndex = TableSchema & {
+type TableIndex = {
     name: string;
+    partition: string;
+    sort?: string;
     type: 'S' | 'N';
 };
 type SharedOptions = {
@@ -33,14 +35,14 @@ declare class Dynamodb {
         secretAccessKey: string;
         table: string;
     });
-    batchWrite(items: Dict[]): Promise<Dict[]>;
-    batchDelete(item: Dict, opts?: SharedOptions & {
+    batchWrite<T = Dict>(items: Dict[]): Promise<T[]>;
+    batchDelete<T = Dict>(item: Dict, opts?: SharedOptions & {
         expression?: string;
-    }): Promise<Dict[]>;
-    delete(item: Dict, opts?: SharedOptions & {
+    }): Promise<T[]>;
+    delete<T = Dict>(item: Dict, opts?: SharedOptions & {
         conditionExpression?: string;
-    }): Promise<Dict | null>;
-    fetch(item: Dict, opts?: SharedOptions & {
+    }): Promise<T | null>;
+    fetch<T = Dict>(item: Dict, opts?: SharedOptions & {
         all?: boolean;
         expression?: string;
         onChunk?: ({ count, items }: {
@@ -51,27 +53,27 @@ declare class Dynamodb {
         startKey?: Dict<string> | null;
     }): Promise<{
         count: number;
-        items: Dict[];
+        items: T[];
         lastEvaluatedKey: Dict<string> | null;
     }>;
-    get(item: Dict, opts?: SharedOptions): Promise<Dict | null>;
-    put(item: Dict, opts?: {
+    get<T = Dict>(item: Dict, opts?: SharedOptions): Promise<T | null>;
+    put<T = Dict>(item: Dict, opts?: {
         attributeNames?: Dict<string>;
         attributeValues?: Dict<string | number>;
         conditionExpression?: string;
         overwrite: boolean;
-    }): Promise<Dict>;
+    }): Promise<T>;
     optimisticResolveSchema(item: Dict): {
         index: string;
         schema: TableSchema;
     };
-    update(item: Dict, opts?: SharedOptions & {
+    update<T = Dict>(item: Dict, opts?: SharedOptions & {
         allowUpdatePartitionAndSort?: boolean;
         conditionExpression?: string;
         expression?: string;
         updateFn?: (item: Dict) => Dict | null;
         upsert?: boolean;
-    }): Promise<Dict>;
+    }): Promise<T>;
     private updateWithTransaction;
     createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput>;
 }

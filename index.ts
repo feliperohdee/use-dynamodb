@@ -24,7 +24,7 @@ import {
 
 type Dict<T = any> = { [key: string]: T };
 type TableSchema = { partition: string; sort: string };
-type TableIndex = TableSchema & { name: string; type: 'S' | 'N' };
+type TableIndex = { name: string; partition: string; sort?: string; type: 'S' | 'N' };
 
 type SharedOptions = {
 	attributeNames?: Dict<string>;
@@ -225,7 +225,7 @@ class Dynamodb {
 		this.table = opts.table;
 	}
 
-	async batchWrite(items: Dict[]): Promise<Dict[]> {
+	async batchWrite<T = Dict>(items: Dict[]): Promise<T[]> {
 		const ts = _.now();
 
 		items = _.map(items, item => {
@@ -248,10 +248,10 @@ class Dynamodb {
 			);
 		}
 
-		return items as Dict[];
+		return items as T[];
 	}
 
-	async batchDelete(item: Dict, opts = BATCH_DELETE_OPTS): Promise<Dict[]> {
+	async batchDelete<T = Dict>(item: Dict, opts = BATCH_DELETE_OPTS): Promise<T[]> {
 		opts = _.defaults({}, opts, BATCH_DELETE_OPTS);
 
 		const del = async (items: Dict[]) => {
@@ -281,7 +281,7 @@ class Dynamodb {
 			}
 		};
 
-		const { items } = await this.fetch(item, {
+		const { items } = await this.fetch<T>(item, {
 			...opts,
 			all: true,
 			onChunk: async ({ items }) => {
@@ -292,7 +292,7 @@ class Dynamodb {
 		return items;
 	}
 
-	async delete(item: Dict, opts = DELETE_OPTS): Promise<Dict | null> {
+	async delete<T = Dict>(item: Dict, opts = DELETE_OPTS): Promise<T | null> {
 		opts = _.defaults({}, opts, DELETE_OPTS);
 
 		const current = await this.get(item, opts);
@@ -321,15 +321,15 @@ class Dynamodb {
 			})
 		);
 
-		return res.Attributes as Dict;
+		return res.Attributes as T;
 	}
 
-	async fetch(
+	async fetch<T = Dict>(
 		item: Dict,
 		opts = FETCH_OPTS
 	): Promise<{
 		count: number;
-		items: Dict[];
+		items: T[];
 		lastEvaluatedKey: Dict<string> | null;
 	}> {
 		opts = _.defaults({}, opts, FETCH_OPTS);
@@ -449,12 +449,12 @@ class Dynamodb {
 
 		return {
 			count: _.size(items),
-			items: items as Dict[],
+			items: items as T[],
 			lastEvaluatedKey: res.LastEvaluatedKey || null
 		};
 	}
 
-	async get(item: Dict, opts = GET_OPTS): Promise<Dict | null> {
+	async get<T = Dict>(item: Dict, opts = GET_OPTS): Promise<T | null> {
 		opts = _.defaults({}, opts, GET_OPTS);
 
 		const res = await this.fetch(item, {
@@ -462,10 +462,10 @@ class Dynamodb {
 			limit: 1
 		});
 
-		return _.size(res.items) > 0 ? res.items[0] : null;
+		return _.size(res.items) > 0 ? (res.items[0] as T) : null;
 	}
 
-	async put(item: Dict, opts = PUT_OPTS): Promise<Dict> {
+	async put<T = Dict>(item: Dict, opts = PUT_OPTS): Promise<T> {
 		opts = _.defaults({}, opts, PUT_OPTS);
 
 		let conditionExpression = '';
@@ -503,7 +503,7 @@ class Dynamodb {
 
 		await this.client.send(new PutCommand(putParams));
 
-		return item as Dict;
+		return item as T;
 	}
 
 	optimisticResolveSchema(item: Dict): { index: string; schema: TableSchema } {
@@ -520,8 +520,12 @@ class Dynamodb {
 
 		// test if match any index's schema
 		for (const { name, partition, sort } of this.indexes) {
+			if (!sort) {
+				continue;
+			}
+
 			if (_.has(item, partition) && _.has(item, sort)) {
-				return { index: name, schema: { partition, sort } };
+				return { index: name, schema: { partition, sort: sort } };
 			}
 		}
 
@@ -546,7 +550,7 @@ class Dynamodb {
 		return { index: '', schema: { partition: '', sort: '' } };
 	}
 
-	async update(item: Dict, opts = UPDATE_OPTS): Promise<Dict> {
+	async update<T = Dict>(item: Dict, opts = UPDATE_OPTS): Promise<T> {
 		opts = _.defaults({}, opts, UPDATE_OPTS);
 
 		let current = await this.get(item);
@@ -598,7 +602,7 @@ class Dynamodb {
 				})
 			);
 
-			return res.Attributes as Dict;
+			return res.Attributes as T;
 		}
 
 		if (_.isFunction(opts.updateFn)) {
@@ -636,7 +640,7 @@ class Dynamodb {
 		});
 	}
 
-	private async updateWithTransaction(item: Dict, current: Dict, opts: typeof UPDATE_OPTS): Promise<Dict> {
+	private async updateWithTransaction<T = Dict>(item: Dict, current: Dict, opts: typeof UPDATE_OPTS): Promise<T> {
 		const deleteParams = {
 			Delete: {
 				Key: {
@@ -670,7 +674,7 @@ class Dynamodb {
 			})
 		);
 
-		return item as Dict;
+		return item as T;
 	}
 
 	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {
@@ -689,18 +693,23 @@ class Dynamodb {
 				});
 
 				const globalIndexes = _.map(gi, index => {
+					const keySchema = [
+						{
+							AttributeName: index.partition,
+							KeyType: 'HASH'
+						}
+					];
+
+					if (index.sort) {
+						keySchema.push({
+							AttributeName: index.sort,
+							KeyType: 'RANGE'
+						});
+					}
+
 					return {
 						IndexName: index.name,
-						KeySchema: [
-							{
-								AttributeName: index.partition,
-								KeyType: 'HASH'
-							},
-							{
-								AttributeName: index.sort,
-								KeyType: 'RANGE'
-							}
-						],
+						KeySchema: keySchema,
 						Projection: {
 							ProjectionType: 'ALL'
 						}
@@ -708,16 +717,21 @@ class Dynamodb {
 				}) as GlobalSecondaryIndex[];
 
 				const globalIndexesDefinitions = _.flatMap(gi, index => {
-					return [
+					const definition = [
 						{
 							AttributeName: index.partition,
 							AttributeType: 'S'
-						},
-						{
-							AttributeName: index.sort,
-							AttributeType: index.type
 						}
 					];
+
+					if (index.sort) {
+						definition.push({
+							AttributeName: index.sort,
+							AttributeType: index.type
+						});
+					}
+
+					return definition;
 				}) as AttributeDefinition[];
 
 				const li = _.filter(this.indexes, index => {
