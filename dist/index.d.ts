@@ -63,7 +63,20 @@ declare class Dynamodb {
     delete<T = Dict>(item: Dict, opts?: SharedOptions & {
         conditionExpression?: string;
     }): Promise<T | null>;
-    fetch<T = Dict>(item: Dict, opts?: SharedOptions & {
+    get<T = Dict>(item: Dict, opts?: SharedOptions & {
+        consistentRead?: boolean;
+    }): Promise<T | null>;
+    optimisticResolveSchema(item: Dict): {
+        index: string;
+        schema: TableSchema;
+    };
+    put<T = Dict>(item: Dict, opts?: {
+        attributeNames?: Dict<string>;
+        attributeValues?: Dict<string | number>;
+        conditionExpression?: string;
+        overwrite: boolean;
+    }): Promise<T>;
+    query<T = Dict>(item: Dict, opts?: SharedOptions & {
         all?: boolean;
         expression?: string;
         consistentRead?: boolean;
@@ -97,19 +110,6 @@ declare class Dynamodb {
         items: T[];
         lastEvaluatedKey: Dict<string> | null;
     }>;
-    get<T = Dict>(item: Dict, opts?: SharedOptions & {
-        consistentRead?: boolean;
-    }): Promise<T | null>;
-    put<T = Dict>(item: Dict, opts?: {
-        attributeNames?: Dict<string>;
-        attributeValues?: Dict<string | number>;
-        conditionExpression?: string;
-        overwrite: boolean;
-    }): Promise<T>;
-    optimisticResolveSchema(item: Dict): {
-        index: string;
-        schema: TableSchema;
-    };
     update<T = Dict>(item: Dict, opts?: SharedOptions & {
         allowUpdatePartitionAndSort?: boolean;
         conditionExpression?: string;

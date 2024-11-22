@@ -83,7 +83,7 @@ describe('index', () => {
 
 	describe('batchWrite / batchDelete', () => {
 		beforeEach(async () => {
-			vi.spyOn(dynamodb, 'fetch');
+			vi.spyOn(dynamodb, 'query');
 			vi.spyOn(dynamodb.client, 'send');
 		});
 
@@ -127,8 +127,8 @@ describe('index', () => {
 			]);
 
 			expect(dynamodb.client.send).toHaveBeenCalledTimes(6);
-			expect(dynamodb.fetch).toHaveBeenCalledTimes(2);
-			expect(dynamodb.fetch).toHaveBeenCalledWith(
+			expect(dynamodb.query).toHaveBeenCalledTimes(2);
+			expect(dynamodb.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0'
 				},
@@ -143,7 +143,7 @@ describe('index', () => {
 					prefix: false
 				}
 			);
-			expect(dynamodb.fetch).toHaveBeenCalledWith(
+			expect(dynamodb.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-1'
 				},
@@ -163,10 +163,10 @@ describe('index', () => {
 			expect(deleteItems[1]).toHaveLength(26);
 
 			const res = await Promise.all([
-				dynamodb.fetch({
+				dynamodb.query({
 					pk: 'pk-0'
 				}),
-				dynamodb.fetch({
+				dynamodb.query({
 					pk: 'pk-1'
 				})
 			]);
@@ -422,423 +422,6 @@ describe('index', () => {
 		});
 	});
 
-	describe('fetch', () => {
-		beforeAll(async () => {
-			await dynamodb.batchWrite(createItems(10));
-		});
-
-		afterAll(async () => {
-			await Promise.all([
-				dynamodb.batchDelete({
-					pk: 'pk-0'
-				}),
-				dynamodb.batchDelete({
-					pk: 'pk-1'
-				})
-			]);
-		});
-
-		beforeEach(() => {
-			vi.spyOn(dynamodb.client, 'send');
-		});
-
-		it('should fetch with partition', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch({
-				pk: 'pk-0'
-			});
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0'
-						},
-						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(5);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by partition/sort', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch({
-				pk: 'pk-0',
-				sk: 'sk-0'
-			});
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk',
-							'#__sk': 'sk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0',
-							':__sk': 'sk-0'
-						},
-						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(1);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by partition/sort with prefix', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch(
-				{
-					pk: 'pk-0',
-					sk: 'sk-'
-				},
-				{
-					prefix: true
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk',
-							'#__sk': 'sk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0',
-							':__sk': 'sk-'
-						},
-						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(5);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by local secondary index', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch({
-				pk: 'pk-0',
-				lsiSk: 'lsi-sk-0'
-			});
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk',
-							'#__sk': 'lsiSk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0',
-							':__sk': 'lsi-sk-0'
-						},
-						IndexName: 'ls-index',
-						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(1);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by global secondary index', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch({
-				gsiPk: 'gsi-pk-0',
-				gsiSk: 'gsi-sk-0'
-			});
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'gsiPk',
-							'#__sk': 'gsiSk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'gsi-pk-0',
-							':__sk': 'gsi-sk-0'
-						},
-						IndexName: 'gs-index',
-						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(1);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by global secondary index with partition', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch({
-				gsiPk: 'gsi-pk-0'
-			});
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'gsiPk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'gsi-pk-0'
-						},
-						IndexName: 'gs-index',
-						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(5);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by custom expression', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					attributeNames: { '#lsiSk': 'lsiSk' },
-					attributeValues: { ':from': 'lsi-sk-0', ':to': 'lsi-sk-3' },
-					index: 'ls-index',
-					expression: ' #lsiSk BETWEEN :from AND :to'
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk',
-							'#lsiSk': 'lsiSk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0',
-							':from': 'lsi-sk-0',
-							':to': 'lsi-sk-3'
-						},
-						IndexName: 'ls-index',
-						KeyConditionExpression: '#__pk = :__pk AND #lsiSk BETWEEN :from AND :to',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(2);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch by filterExpression', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					attributeNames: { '#foo': 'foo' },
-					attributeValues: { ':foo': 'foo-0' },
-					filterExpression: '#foo = :foo'
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk',
-							'#foo': 'foo'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0',
-							':foo': 'foo-0'
-						},
-						FilterExpression: '#foo = :foo',
-						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(1);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch with limit/startKey', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					limit: 1
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0'
-						},
-						KeyConditionExpression: '#__pk = :__pk',
-						Limit: 1,
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(1);
-			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-0' });
-
-			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					startKey: lastEvaluatedKey
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: false,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0'
-						},
-						ExclusiveStartKey: { pk: 'pk-0', sk: 'sk-0' },
-						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count2).toEqual(4);
-			expect(lastEvaluatedKey2).toBeNull();
-		});
-
-		it('should fetch all with limit/startKey and onChunk', async () => {
-			const onChunk = vi.fn();
-			const { count, lastEvaluatedKey } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					all: true,
-					onChunk,
-					limit: 2
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledTimes(3);
-			expect(onChunk).toHaveBeenCalledTimes(3);
-			expect(onChunk).toHaveBeenCalledWith({
-				count: 2,
-				items: expect.any(Array)
-			});
-			expect(onChunk).toHaveBeenCalledWith({
-				count: 1,
-				items: expect.any(Array)
-			});
-
-			expect(count).toEqual(5);
-			expect(lastEvaluatedKey).toBeNull();
-		});
-
-		it('should fetch consistent', async () => {
-			const { count } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					consistentRead: true
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConsistentRead: true,
-						ExpressionAttributeNames: {
-							'#__pk': 'pk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0'
-						},
-						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(5);
-		});
-
-		it('should fetch with select', async () => {
-			const { count, items } = await dynamodb.fetch(
-				{
-					pk: 'pk-0'
-				},
-				{
-					select: ['foo', 'gsiPk']
-				}
-			);
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ProjectionExpression: '#__pe1, #__pe2',
-						ExpressionAttributeNames: {
-							'#__pe1': 'foo',
-							'#__pe2': 'gsiPk',
-							'#__pk': 'pk'
-						},
-						ExpressionAttributeValues: {
-							':__pk': 'pk-0'
-						},
-						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
-					})
-				})
-			);
-
-			expect(count).toEqual(5);
-			expect(items[0]).toEqual(
-				expect.objectContaining({
-					foo: 'foo-0',
-					gsiPk: 'gsi-pk-0'
-				})
-			);
-		});
-	});
-
 	describe('get', () => {
 		beforeAll(async () => {
 			await dynamodb.batchWrite(createItems(1));
@@ -856,7 +439,7 @@ describe('index', () => {
 		});
 
 		beforeEach(() => {
-			vi.spyOn(dynamodb, 'fetch');
+			vi.spyOn(dynamodb, 'query');
 		});
 
 		it('should return null if not found', async () => {
@@ -874,7 +457,7 @@ describe('index', () => {
 				sk: 'sk-0'
 			});
 
-			expect(dynamodb.fetch).toHaveBeenCalledWith(
+			expect(dynamodb.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -916,7 +499,7 @@ describe('index', () => {
 				}
 			);
 
-			expect(dynamodb.fetch).toHaveBeenCalledWith(
+			expect(dynamodb.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -956,7 +539,7 @@ describe('index', () => {
 				}
 			);
 
-			expect(dynamodb.fetch).toHaveBeenCalledWith(
+			expect(dynamodb.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -979,6 +562,71 @@ describe('index', () => {
 					gsiPk: 'gsi-pk-0'
 				})
 			);
+		});
+	});
+
+	describe('optimisticResolveSchema', () => {
+		it('should resolve', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			expect(index).toEqual('sort');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: 'sk'
+			});
+		});
+
+		it('should resolve only partition', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				pk: 'pk-0'
+			});
+
+			expect(index).toEqual('');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: ''
+			});
+		});
+
+		it('should resolve by local secondary index', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				pk: 'pk-0',
+				lsiSk: 'lsi-sk-0'
+			});
+
+			expect(index).toEqual('ls-index');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: 'lsiSk'
+			});
+		});
+
+		it('should resolve by global secondary index', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				gsiPk: 'gsi-pk-0',
+				gsiSk: 'gsi-sk-0'
+			});
+
+			expect(index).toEqual('gs-index');
+			expect(schema).toEqual({
+				partition: 'gsiPk',
+				sort: 'gsiSk'
+			});
+		});
+
+		it('should resolve only partition by global secondary index', () => {
+			const { index, schema } = dynamodb.optimisticResolveSchema({
+				gsiPk: 'gsi-pk-0'
+			});
+
+			expect(index).toEqual('gs-index');
+			expect(schema).toEqual({
+				partition: 'gsiPk',
+				sort: ''
+			});
 		});
 	});
 
@@ -1165,68 +813,420 @@ describe('index', () => {
 		});
 	});
 
-	describe('optimisticResolveSchema', () => {
-		it('should resolve', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+	describe('query', () => {
+		beforeAll(async () => {
+			await dynamodb.batchWrite(createItems(10));
+		});
+
+		afterAll(async () => {
+			await Promise.all([
+				dynamodb.batchDelete({
+					pk: 'pk-0'
+				}),
+				dynamodb.batchDelete({
+					pk: 'pk-1'
+				})
+			]);
+		});
+
+		beforeEach(() => {
+			vi.spyOn(dynamodb.client, 'send');
+		});
+
+		it('should query with partition', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query({
+				pk: 'pk-0'
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query by partition/sort', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query({
 				pk: 'pk-0',
 				sk: 'sk-0'
 			});
 
-			expect(index).toEqual('sort');
-			expect(schema).toEqual({
-				partition: 'pk',
-				sort: 'sk'
-			});
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#__sk': 'sk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':__sk': 'sk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(1);
+			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should resolve only partition', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
-				pk: 'pk-0'
-			});
+		it('should query by partition/sort with prefix', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query(
+				{
+					pk: 'pk-0',
+					sk: 'sk-'
+				},
+				{
+					prefix: true
+				}
+			);
 
-			expect(index).toEqual('');
-			expect(schema).toEqual({
-				partition: 'pk',
-				sort: ''
-			});
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#__sk': 'sk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':__sk': 'sk-'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should resolve by local secondary index', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+		it('should query by local secondary index', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query({
 				pk: 'pk-0',
 				lsiSk: 'lsi-sk-0'
 			});
 
-			expect(index).toEqual('ls-index');
-			expect(schema).toEqual({
-				partition: 'pk',
-				sort: 'lsiSk'
-			});
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#__sk': 'lsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':__sk': 'lsi-sk-0'
+						},
+						IndexName: 'ls-index',
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(1);
+			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should resolve by global secondary index', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+		it('should query by global secondary index', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query({
 				gsiPk: 'gsi-pk-0',
 				gsiSk: 'gsi-sk-0'
 			});
 
-			expect(index).toEqual('gs-index');
-			expect(schema).toEqual({
-				partition: 'gsiPk',
-				sort: 'gsiSk'
-			});
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'gsiPk',
+							'#__sk': 'gsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'gsi-pk-0',
+							':__sk': 'gsi-sk-0'
+						},
+						IndexName: 'gs-index',
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(1);
+			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should resolve only partition by global secondary index', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+		it('should query by global secondary index with partition', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query({
 				gsiPk: 'gsi-pk-0'
 			});
 
-			expect(index).toEqual('gs-index');
-			expect(schema).toEqual({
-				partition: 'gsiPk',
-				sort: ''
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'gsiPk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'gsi-pk-0'
+						},
+						IndexName: 'gs-index',
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query by custom expression', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					attributeNames: { '#lsiSk': 'lsiSk' },
+					attributeValues: { ':from': 'lsi-sk-0', ':to': 'lsi-sk-3' },
+					index: 'ls-index',
+					expression: ' #lsiSk BETWEEN :from AND :to'
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#lsiSk': 'lsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':from': 'lsi-sk-0',
+							':to': 'lsi-sk-3'
+						},
+						IndexName: 'ls-index',
+						KeyConditionExpression: '#__pk = :__pk AND #lsiSk BETWEEN :from AND :to',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(2);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query by filterExpression', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					attributeNames: { '#foo': 'foo' },
+					attributeValues: { ':foo': 'foo-0' },
+					filterExpression: '#foo = :foo'
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#foo': 'foo'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':foo': 'foo-0'
+						},
+						FilterExpression: '#foo = :foo',
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(1);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query with limit/startKey', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					limit: 1
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						Limit: 1,
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(1);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-0' });
+
+			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					startKey: lastEvaluatedKey
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						ExclusiveStartKey: { pk: 'pk-0', sk: 'sk-0' },
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count2).toEqual(4);
+			expect(lastEvaluatedKey2).toBeNull();
+		});
+
+		it('should query all with limit/startKey and onChunk', async () => {
+			const onChunk = vi.fn();
+			const { count, lastEvaluatedKey } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					all: true,
+					onChunk,
+					limit: 2
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledTimes(3);
+			expect(onChunk).toHaveBeenCalledTimes(3);
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 2,
+				items: expect.any(Array)
 			});
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 1,
+				items: expect.any(Array)
+			});
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query consistent', async () => {
+			const { count } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					consistentRead: true
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: true,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+		});
+
+		it('should query with select', async () => {
+			const { count, items } = await dynamodb.query(
+				{
+					pk: 'pk-0'
+				},
+				{
+					select: ['foo', 'gsiPk']
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ProjectionExpression: '#__pe1, #__pe2',
+						ExpressionAttributeNames: {
+							'#__pe1': 'foo',
+							'#__pe2': 'gsiPk',
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(items[0]).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0'
+				})
+			);
 		});
 	});
 

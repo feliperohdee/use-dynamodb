@@ -17,7 +17,7 @@ const DELETE_OPTS = {
     index: '',
     prefix: false
 };
-const FETCH_OPTS = {
+const QUERY_OPTS = {
     all: false,
     attributeNames: {},
     attributeValues: {},
@@ -198,7 +198,7 @@ class Dynamodb {
                 }));
             }
         };
-        const { items } = await this.fetch(item, {
+        const { items } = await this.query(item, {
             ...opts,
             all: true,
             onChunk: async ({ items }) => {
@@ -230,8 +230,93 @@ class Dynamodb {
         }));
         return res.Attributes;
     }
-    async fetch(item, opts = FETCH_OPTS) {
-        opts = _.defaults({}, opts, FETCH_OPTS);
+    async get(item, opts = GET_OPTS) {
+        opts = _.defaults({}, opts, GET_OPTS);
+        const res = await this.query(item, {
+            ...opts,
+            consistentRead: opts.consistentRead,
+            limit: 1,
+            select: opts.select
+        });
+        return _.size(res.items) > 0 ? res.items[0] : null;
+    }
+    optimisticResolveSchema(item) {
+        // test if has partition and sort keys
+        if (_.has(item, this.schema.partition) && _.has(item, this.schema.sort)) {
+            return {
+                index: 'sort',
+                schema: {
+                    partition: this.schema.partition,
+                    sort: this.schema.sort
+                }
+            };
+        }
+        // test if match any index's schema
+        for (const { name, partition, sort } of this.indexes) {
+            if (!sort) {
+                continue;
+            }
+            if (_.has(item, partition) && _.has(item, sort)) {
+                return { index: name, schema: { partition, sort: sort } };
+            }
+        }
+        // test if has only partition key
+        if (_.has(item, this.schema.partition)) {
+            return {
+                index: '',
+                schema: {
+                    partition: this.schema.partition,
+                    sort: ''
+                }
+            };
+        }
+        // test if match any index's partition key
+        for (const { name, partition } of this.indexes) {
+            if (_.has(item, partition)) {
+                return { index: name, schema: { partition, sort: '' } };
+            }
+        }
+        return { index: '', schema: { partition: '', sort: '' } };
+    }
+    async put(item, opts = PUT_OPTS) {
+        opts = _.defaults({}, opts, PUT_OPTS);
+        let conditionExpression = '';
+        if (!opts.overwrite) {
+            conditionExpression = '(attribute_not_exists(#__pk))';
+            opts.attributeNames = {
+                ...opts.attributeNames,
+                '#__pk': this.schema.partition
+            };
+        }
+        if (opts.conditionExpression) {
+            conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
+        }
+        const now = new Date().toISOString();
+        const { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
+        item = {
+            ...item,
+            [createdAtField]: item[createdAtField] ?? now,
+            [updatedAtField]: now,
+            __ts: _.now()
+        };
+        const putParams = {
+            Item: item,
+            TableName: this.table
+        };
+        if (conditionExpression) {
+            putParams.ConditionExpression = conditionExpression;
+        }
+        if (_.size(opts.attributeNames)) {
+            putParams.ExpressionAttributeNames = opts.attributeNames;
+        }
+        if (_.size(opts.attributeValues)) {
+            putParams.ExpressionAttributeValues = opts.attributeValues;
+        }
+        await this.client.send(new PutCommand(putParams));
+        return item;
+    }
+    async query(item, opts = QUERY_OPTS) {
+        opts = _.defaults({}, opts, QUERY_OPTS);
         let queryParams = {
             ConsistentRead: opts.consistentRead,
             ExpressionAttributeNames: {},
@@ -411,91 +496,6 @@ class Dynamodb {
             items: items,
             lastEvaluatedKey: res.LastEvaluatedKey || null
         };
-    }
-    async get(item, opts = GET_OPTS) {
-        opts = _.defaults({}, opts, GET_OPTS);
-        const res = await this.fetch(item, {
-            ...opts,
-            consistentRead: opts.consistentRead,
-            limit: 1,
-            select: opts.select
-        });
-        return _.size(res.items) > 0 ? res.items[0] : null;
-    }
-    async put(item, opts = PUT_OPTS) {
-        opts = _.defaults({}, opts, PUT_OPTS);
-        let conditionExpression = '';
-        if (!opts.overwrite) {
-            conditionExpression = '(attribute_not_exists(#__pk))';
-            opts.attributeNames = {
-                ...opts.attributeNames,
-                '#__pk': this.schema.partition
-            };
-        }
-        if (opts.conditionExpression) {
-            conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
-        }
-        const now = new Date().toISOString();
-        const { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
-        item = {
-            ...item,
-            [createdAtField]: item[createdAtField] ?? now,
-            [updatedAtField]: now,
-            __ts: _.now()
-        };
-        const putParams = {
-            Item: item,
-            TableName: this.table
-        };
-        if (conditionExpression) {
-            putParams.ConditionExpression = conditionExpression;
-        }
-        if (_.size(opts.attributeNames)) {
-            putParams.ExpressionAttributeNames = opts.attributeNames;
-        }
-        if (_.size(opts.attributeValues)) {
-            putParams.ExpressionAttributeValues = opts.attributeValues;
-        }
-        await this.client.send(new PutCommand(putParams));
-        return item;
-    }
-    optimisticResolveSchema(item) {
-        // test if has partition and sort keys
-        if (_.has(item, this.schema.partition) && _.has(item, this.schema.sort)) {
-            return {
-                index: 'sort',
-                schema: {
-                    partition: this.schema.partition,
-                    sort: this.schema.sort
-                }
-            };
-        }
-        // test if match any index's schema
-        for (const { name, partition, sort } of this.indexes) {
-            if (!sort) {
-                continue;
-            }
-            if (_.has(item, partition) && _.has(item, sort)) {
-                return { index: name, schema: { partition, sort: sort } };
-            }
-        }
-        // test if has only partition key
-        if (_.has(item, this.schema.partition)) {
-            return {
-                index: '',
-                schema: {
-                    partition: this.schema.partition,
-                    sort: ''
-                }
-            };
-        }
-        // test if match any index's partition key
-        for (const { name, partition } of this.indexes) {
-            if (_.has(item, partition)) {
-                return { index: name, schema: { partition, sort: '' } };
-            }
-        }
-        return { index: '', schema: { partition: '', sort: '' } };
     }
     async update(item, opts = UPDATE_OPTS) {
         opts = _.defaults({}, opts, UPDATE_OPTS);

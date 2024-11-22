@@ -119,10 +119,10 @@ const deletedItem = await dynamodb.delete({
 
 ### Advanced Query Operations
 
-#### 🔍 Fetch (Query) Items
+#### 🔍 Query Items
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
+const { items, count, lastEvaluatedKey } = await dynamodb.query(
 	{
 		pk: 'user#123'
 	},
@@ -133,10 +133,10 @@ const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
 );
 ```
 
-#### 🔎 Fetch with Filter
+#### 🔎 Query with Filter
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
+const { items, count, lastEvaluatedKey } = await dynamodb.query(
 	{ pk: 'user#123' },
 	{
 		attributeNames: { '#foo': 'foo' },
@@ -146,10 +146,10 @@ const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
 );
 ```
 
-#### 📄 Fetch with Pagination
+#### 📄 Query with Pagination
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
+const { items, count, lastEvaluatedKey } = await dynamodb.query(
 	{ pk: 'user#123' },
 	{
 		limit: 10,
@@ -211,7 +211,7 @@ await dynamodb.batchDelete({ pk: 'user#123' });
 #### 🔍 Query using Local Secondary Index
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.fetch({
+const { items, count, lastEvaluatedKey } = await dynamodb.query({
 	pk: 'user#123',
 	lsiSk: 'lsi-value'
 });
@@ -220,7 +220,7 @@ const { items, count, lastEvaluatedKey } = await dynamodb.fetch({
 #### 🔎 Query using Global Secondary Index
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.fetch({
+const { items, count, lastEvaluatedKey } = await dynamodb.query({
 	gsiPk: 'gsi-partition-value',
 	gsiSk: 'gsi-sort-value'
 });
