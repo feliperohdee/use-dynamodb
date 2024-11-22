@@ -24,9 +24,10 @@ declare const concatConditionExpression: (exp1: string, exp2: string) => string;
 declare const concatUpdateExpression: (exp1: string, exp2: string) => string;
 declare class Dynamodb {
     client: DynamoDBDocumentClient;
-    indexes: TableIndex[];
-    schema: TableSchema;
-    table: string;
+    private indexes;
+    private schema;
+    private table;
+    private timestamps;
     constructor(opts?: {
         accessKeyId: string;
         indexes?: TableIndex[];
@@ -34,6 +35,10 @@ declare class Dynamodb {
         schema: TableSchema;
         secretAccessKey: string;
         table: string;
+        timestamps?: {
+            createdAtField?: string;
+            updatedAtField?: string;
+        };
     });
     batchWrite<T = Dict>(items: Dict[]): Promise<T[]>;
     batchDelete<T = Dict>(item: Dict, opts?: SharedOptions & {

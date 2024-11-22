@@ -114,6 +114,14 @@ const UPDATE_OPTS: SharedOptions & {
 	upsert: false
 };
 
+const CONSTRUCTOR_TIMESTAMP_OPTS: {
+	createdAtField: string;
+	updatedAtField: string;
+} = {
+	createdAtField: 'createdAt',
+	updatedAtField: 'updatedAt'
+};
+
 const CONSTRUCTOR_OPTS: {
 	accessKeyId: string;
 	indexes?: TableIndex[];
@@ -121,13 +129,18 @@ const CONSTRUCTOR_OPTS: {
 	schema: TableSchema;
 	secretAccessKey: string;
 	table: string;
+	timestamps?: {
+		createdAtField?: string;
+		updatedAtField?: string;
+	};
 } = {
 	accessKeyId: '',
 	indexes: [],
 	region: '',
 	schema: { partition: 'namespace', sort: 'id' },
 	secretAccessKey: '',
-	table: ''
+	table: '',
+	timestamps: CONSTRUCTOR_TIMESTAMP_OPTS
 };
 
 const concatConditionExpression = (exp1: string, exp2: string): string => {
@@ -203,9 +216,13 @@ const concatUpdateExpression = (exp1: string, exp2: string): string => {
 
 class Dynamodb {
 	public client: DynamoDBDocumentClient;
-	public indexes: TableIndex[];
-	public schema: TableSchema;
-	public table: string;
+	private indexes: TableIndex[];
+	private schema: TableSchema;
+	private table: string;
+	private timestamps: {
+		createdAtField: string;
+		updatedAtField: string;
+	};
 
 	constructor(opts = CONSTRUCTOR_OPTS) {
 		opts = _.defaults({}, opts, CONSTRUCTOR_OPTS);
@@ -223,13 +240,21 @@ class Dynamodb {
 		this.indexes = opts.indexes || [];
 		this.schema = opts.schema;
 		this.table = opts.table;
+		this.timestamps = _.defaults({}, opts.timestamps, CONSTRUCTOR_TIMESTAMP_OPTS);
 	}
 
 	async batchWrite<T = Dict>(items: Dict[]): Promise<T[]> {
+		const { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
+		const now = new Date().toISOString();
 		const ts = _.now();
 
 		items = _.map(items, item => {
-			return { ...item, __ts: ts };
+			return {
+				...item,
+				[createdAtField]: now,
+				[updatedAtField]: now,
+				__ts: ts
+			};
 		});
 
 		const chunks = _.chunk(items, 25);
@@ -337,7 +362,7 @@ class Dynamodb {
 		let queryParams: QueryCommandInput = {
 			ExpressionAttributeNames: {},
 			ExpressionAttributeValues: {},
-			KeyConditionExpression: '#partition = :partition',
+			KeyConditionExpression: '#__pk = :__pk',
 			TableName: this.table
 		};
 
@@ -359,11 +384,11 @@ class Dynamodb {
 			...queryParams,
 			ExpressionAttributeNames: {
 				...queryParams.ExpressionAttributeNames,
-				'#partition': schema.partition
+				'#__pk': schema.partition
 			},
 			ExpressionAttributeValues: {
 				...queryParams.ExpressionAttributeValues,
-				':partition': item[schema.partition]
+				':__pk': item[schema.partition]
 			}
 		};
 
@@ -374,20 +399,20 @@ class Dynamodb {
 
 			if (schema.sort) {
 				if (opts.prefix) {
-					queryParams.KeyConditionExpression += ' AND begins_with(#sort, :sort)';
+					queryParams.KeyConditionExpression += ' AND begins_with(#__sk, :__sk)';
 				} else {
-					queryParams.KeyConditionExpression += ' AND #sort = :sort';
+					queryParams.KeyConditionExpression += ' AND #__sk = :__sk';
 				}
 
 				queryParams = {
 					...queryParams,
 					ExpressionAttributeNames: {
 						...queryParams.ExpressionAttributeNames,
-						'#sort': schema.sort
+						'#__sk': schema.sort
 					},
 					ExpressionAttributeValues: {
 						...queryParams.ExpressionAttributeValues,
-						':sort': item[schema.sort]
+						':__sk': item[schema.sort]
 					}
 				};
 			}
@@ -471,10 +496,10 @@ class Dynamodb {
 		let conditionExpression = '';
 
 		if (!opts.overwrite) {
-			conditionExpression = '(attribute_not_exists(#partition))';
+			conditionExpression = '(attribute_not_exists(#__pk))';
 			opts.attributeNames = {
 				...opts.attributeNames,
-				'#partition': this.schema.partition
+				'#__pk': this.schema.partition
 			};
 		}
 
@@ -482,7 +507,15 @@ class Dynamodb {
 			conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
 		}
 
-		item = { ...item, __ts: _.now() };
+		const now = new Date().toISOString();
+		const { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
+
+		item = {
+			...item,
+			[createdAtField]: item[createdAtField] ?? now,
+			[updatedAtField]: now,
+			__ts: _.now()
+		};
 
 		const putParams: PutCommandInput = {
 			Item: item,
@@ -560,6 +593,7 @@ class Dynamodb {
 		}
 
 		let conditionExpression = '(attribute_not_exists(#__ts) OR #__ts = :__ts)';
+		let { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
 
 		if (opts.conditionExpression) {
 			conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
@@ -576,14 +610,26 @@ class Dynamodb {
 		};
 
 		if (opts.expression) {
-			opts.expression = concatUpdateExpression(opts.expression, 'SET #__ts = :__ts');
+			const now = new Date().toISOString();
+
+			opts.expression = concatUpdateExpression(opts.expression, 'SET #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up');
+			opts.attributeNames = {
+				...opts.attributeNames,
+				'#__cr': createdAtField,
+				'#__up': updatedAtField
+			};
+
+			opts.attributeValues = {
+				...opts.attributeValues,
+				':__cr': now,
+				':__up': now
+			};
 
 			if (!opts.upsert) {
 				conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
 				opts.attributeNames = {
 					...opts.attributeNames,
-					'#__pk': this.schema.partition,
-					'#__ts': '__ts'
+					'#__pk': this.schema.partition
 				};
 			}
 

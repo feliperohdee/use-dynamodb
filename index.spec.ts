@@ -19,7 +19,7 @@ const createItems = (count: number) => {
 describe('index', () => {
 	let dynamodb: Dynamodb;
 
-	beforeAll(() => {
+	beforeEach(() => {
 		dynamodb = new Dynamodb({
 			accessKeyId: process.env.AWS_ACCESS_KEY || '',
 			region: 'us-east-1',
@@ -301,8 +301,8 @@ describe('index', () => {
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
-					sk: 'sk-0',
-					pk: 'pk-0'
+					pk: 'pk-0',
+					sk: 'sk-0'
 				})
 			);
 		});
@@ -354,8 +354,8 @@ describe('index', () => {
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
-					sk: 'sk-0',
-					pk: 'pk-0'
+					pk: 'pk-0',
+					sk: 'sk-0'
 				})
 			);
 		});
@@ -407,8 +407,8 @@ describe('index', () => {
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
-					sk: 'sk-0',
-					pk: 'pk-0'
+					pk: 'pk-0',
+					sk: 'sk-0'
 				})
 			);
 		});
@@ -443,12 +443,12 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk'
+							'#__pk': 'pk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0'
+							':__pk': 'pk-0'
 						},
-						KeyConditionExpression: '#partition = :partition',
+						KeyConditionExpression: '#__pk = :__pk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -468,14 +468,14 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk',
-							'#sort': 'sk'
+							'#__pk': 'pk',
+							'#__sk': 'sk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0',
-							':sort': 'sk-0'
+							':__pk': 'pk-0',
+							':__sk': 'sk-0'
 						},
-						KeyConditionExpression: '#partition = :partition AND #sort = :sort',
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -500,14 +500,14 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk',
-							'#sort': 'sk'
+							'#__pk': 'pk',
+							'#__sk': 'sk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0',
-							':sort': 'sk-'
+							':__pk': 'pk-0',
+							':__sk': 'sk-'
 						},
-						KeyConditionExpression: '#partition = :partition AND begins_with(#sort, :sort)',
+						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -527,15 +527,15 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk',
-							'#sort': 'lsiSk'
+							'#__pk': 'pk',
+							'#__sk': 'lsiSk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0',
-							':sort': 'lsi-sk-0'
+							':__pk': 'pk-0',
+							':__sk': 'lsi-sk-0'
 						},
 						IndexName: 'ls-index',
-						KeyConditionExpression: '#partition = :partition AND #sort = :sort',
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -555,15 +555,15 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'gsiPk',
-							'#sort': 'gsiSk'
+							'#__pk': 'gsiPk',
+							'#__sk': 'gsiSk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'gsi-pk-0',
-							':sort': 'gsi-sk-0'
+							':__pk': 'gsi-pk-0',
+							':__sk': 'gsi-sk-0'
 						},
 						IndexName: 'gs-index',
-						KeyConditionExpression: '#partition = :partition AND #sort = :sort',
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -582,13 +582,13 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'gsiPk'
+							'#__pk': 'gsiPk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'gsi-pk-0'
+							':__pk': 'gsi-pk-0'
 						},
 						IndexName: 'gs-index',
-						KeyConditionExpression: '#partition = :partition',
+						KeyConditionExpression: '#__pk = :__pk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -615,16 +615,16 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk',
+							'#__pk': 'pk',
 							'#lsiSk': 'lsiSk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0',
+							':__pk': 'pk-0',
 							':from': 'lsi-sk-0',
 							':to': 'lsi-sk-3'
 						},
 						IndexName: 'ls-index',
-						KeyConditionExpression: '#partition = :partition AND #lsiSk BETWEEN :from AND :to',
+						KeyConditionExpression: '#__pk = :__pk AND #lsiSk BETWEEN :from AND :to',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -650,15 +650,15 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk',
+							'#__pk': 'pk',
 							'#foo': 'foo'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0',
+							':__pk': 'pk-0',
 							':foo': 'foo-0'
 						},
 						FilterExpression: '#foo = :foo',
-						KeyConditionExpression: '#partition = :partition',
+						KeyConditionExpression: '#__pk = :__pk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -682,12 +682,12 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk'
+							'#__pk': 'pk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0'
+							':__pk': 'pk-0'
 						},
-						KeyConditionExpression: '#partition = :partition',
+						KeyConditionExpression: '#__pk = :__pk',
 						Limit: 1,
 						TableName: 'simple-img-new-spec'
 					})
@@ -710,13 +710,13 @@ describe('index', () => {
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ExpressionAttributeNames: {
-							'#partition': 'pk'
+							'#__pk': 'pk'
 						},
 						ExpressionAttributeValues: {
-							':partition': 'pk-0'
+							':__pk': 'pk-0'
 						},
 						ExclusiveStartKey: { pk: 'pk-0', sk: 'sk-0' },
-						KeyConditionExpression: '#partition = :partition',
+						KeyConditionExpression: '#__pk = :__pk',
 						TableName: 'simple-img-new-spec'
 					})
 				})
@@ -883,18 +883,21 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#partition))',
-						ExpressionAttributeNames: { '#partition': 'pk' },
+						ConditionExpression: '(attribute_not_exists(#__pk))',
+						ExpressionAttributeNames: { '#__pk': 'pk' },
 						Item: {
 							__ts: expect.any(Number),
+							createdAt: expect.any(String),
 							pk: 'pk-0',
-							sk: 'sk-0'
+							sk: 'sk-0',
+							updatedAt: expect.any(String)
 						},
 						TableName: 'simple-img-new-spec'
 					})
 				})
 			);
 
+			expect(item.createdAt).toEqual(item.updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
@@ -903,7 +906,7 @@ describe('index', () => {
 			);
 		});
 
-		it('should throw on ovewrite', async () => {
+		it('should throw on overwrite', async () => {
 			try {
 				await dynamodb.put({
 					pk: 'pk-0',
@@ -922,7 +925,7 @@ describe('index', () => {
 				sk: 'sk-0'
 			});
 
-			const putItem = await dynamodb.put(
+			const overwriteItem = await dynamodb.put(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -937,19 +940,23 @@ describe('index', () => {
 					input: expect.objectContaining({
 						Item: {
 							__ts: expect.any(Number),
+							createdAt: expect.any(String),
 							pk: 'pk-0',
-							sk: 'sk-0'
+							sk: 'sk-0',
+							updatedAt: expect.any(String)
 						},
 						TableName: 'simple-img-new-spec'
 					})
 				})
 			);
 
-			expect(putItem.__ts).toBeGreaterThan(item!.__ts);
-			expect(putItem).toEqual(
+			expect(overwriteItem.__ts).toBeGreaterThan(item!.__ts);
+			expect(overwriteItem.createdAt).not.toEqual(item!.createdAt);
+			expect(overwriteItem.createdAt).toEqual(overwriteItem.updatedAt);
+			expect(overwriteItem).toEqual(
 				expect.objectContaining({
-					sk: 'sk-0',
-					pk: 'pk-0'
+					pk: 'pk-0',
+					sk: 'sk-0'
 				})
 			);
 		});
@@ -971,23 +978,64 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#partition)) AND #foo <> :foo',
-						ExpressionAttributeNames: { '#foo': 'foo', '#partition': 'pk' },
+						ConditionExpression: '(attribute_not_exists(#__pk)) AND #foo <> :foo',
+						ExpressionAttributeNames: { '#foo': 'foo', '#__pk': 'pk' },
 						ExpressionAttributeValues: { ':foo': 'foo-0' },
 						Item: {
 							__ts: expect.any(Number),
+							createdAt: expect.any(String),
 							pk: 'pk-0',
-							sk: 'sk-1'
+							sk: 'sk-1',
+							updatedAt: expect.any(String)
 						},
 						TableName: 'simple-img-new-spec'
 					})
 				})
 			);
 
+			expect(item.createdAt).toEqual(item.updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-1'
+				})
+			);
+		});
+
+		it('should put with custom timestamp field names', async () => {
+			// @ts-expect-error
+			dynamodb.timestamps = {
+				createdAtField: 'createdDate',
+				updatedAtField: 'updatedDate'
+			};
+
+			const item = await dynamodb.put({
+				pk: 'pk-0',
+				sk: 'sk-3'
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConditionExpression: '(attribute_not_exists(#__pk))',
+						ExpressionAttributeNames: { '#__pk': 'pk' },
+						Item: {
+							__ts: expect.any(Number),
+							createdDate: expect.any(String),
+							pk: 'pk-0',
+							sk: 'sk-3',
+							updatedDate: expect.any(String)
+						},
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(item.createdDate).toEqual(item.updatedDate);
+			expect(item).toEqual(
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-3'
 				})
 			);
 		});
@@ -1060,8 +1108,6 @@ describe('index', () => {
 
 	describe('update', () => {
 		beforeEach(async () => {
-			await dynamodb.batchWrite(createItems(1));
-
 			vi.spyOn(dynamodb, 'put');
 			vi.spyOn(dynamodb.client, 'send');
 		});
@@ -1101,6 +1147,8 @@ describe('index', () => {
 		});
 
 		it('should update', async () => {
+			await dynamodb.batchWrite(createItems(1));
+
 			const item = await dynamodb.update(
 				{
 					pk: 'pk-0',
@@ -1119,12 +1167,14 @@ describe('index', () => {
 			expect(dynamodb.put).toHaveBeenCalledWith(
 				{
 					__ts: expect.any(Number),
+					createdAt: expect.any(String),
 					foo: 'foo-1',
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
 					pk: 'pk-0',
-					sk: 'sk-0'
+					sk: 'sk-0',
+					updatedAt: expect.any(String)
 				},
 				{
 					attributeNames: {
@@ -1137,6 +1187,67 @@ describe('index', () => {
 				}
 			);
 
+			expect(item.updatedAt).not.toEqual(item.createdAt);
+			expect(item).toEqual(
+				expect.objectContaining({
+					foo: 'foo-1',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-0',
+					lsiSk: 'lsi-sk-0',
+					sk: 'sk-0',
+					pk: 'pk-0'
+				})
+			);
+		});
+
+		it('should use custom update timestamp field', async () => {
+			// @ts-expect-error
+			dynamodb.timestamps = {
+				createdAtField: 'createdDate',
+				updatedAtField: 'updatedDate'
+			};
+
+			await dynamodb.batchWrite(createItems(1));
+
+			const item = await dynamodb.update(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					updateFn: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					}
+				}
+			);
+
+			expect(dynamodb.put).toHaveBeenCalledWith(
+				{
+					__ts: expect.any(Number),
+					createdDate: expect.any(String),
+					foo: 'foo-1',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-0',
+					lsiSk: 'lsi-sk-0',
+					pk: 'pk-0',
+					sk: 'sk-0',
+					updatedDate: expect.any(String)
+				},
+				{
+					attributeNames: {
+						'#__pk': 'pk',
+						'#__ts': '__ts'
+					},
+					attributeValues: { ':__ts': expect.any(Number) },
+					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
+					overwrite: true
+				}
+			);
+
+			expect(item.createdDate).not.toEqual(item.updatedDate);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
@@ -1150,6 +1261,8 @@ describe('index', () => {
 		});
 
 		it('should not update partition and sort', async () => {
+			await dynamodb.batchWrite(createItems(1));
+
 			try {
 				await dynamodb.update(
 					{
@@ -1176,7 +1289,7 @@ describe('index', () => {
 			const item = await dynamodb.update(
 				{
 					pk: 'pk-0',
-					sk: 'sk-1'
+					sk: 'sk-0'
 				},
 				{
 					updateFn: item => {
@@ -1193,7 +1306,7 @@ describe('index', () => {
 				{
 					foo: 'foo-1',
 					pk: 'pk-0',
-					sk: 'sk-1'
+					sk: 'sk-0'
 				},
 				{
 					attributeNames: { '#__ts': '__ts' },
@@ -1203,16 +1316,19 @@ describe('index', () => {
 				}
 			);
 
+			expect(item.createdAt).toEqual(item.updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
 					pk: 'pk-0',
-					sk: 'sk-1'
+					sk: 'sk-0'
 				})
 			);
 		});
 
 		it('should update with expression', async () => {
+			await dynamodb.batchWrite(createItems(1));
+
 			const item = await dynamodb.update(
 				{
 					pk: 'pk-0',
@@ -1236,15 +1352,19 @@ describe('index', () => {
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
 						ExpressionAttributeNames: {
-							'#bar': 'bar',
-							'#foo': 'foo',
+							'#__cr': 'createdAt',
 							'#__pk': 'pk',
-							'#__ts': '__ts'
+							'#__ts': '__ts',
+							'#__up': 'updatedAt',
+							'#bar': 'bar',
+							'#foo': 'foo'
 						},
 						ExpressionAttributeValues: {
 							':foo': 'foo-1',
 							':one': 1,
-							':__ts': expect.any(Number)
+							':__cr': expect.any(String),
+							':__ts': expect.any(Number),
+							':__up': expect.any(String)
 						},
 						Key: {
 							pk: 'pk-0',
@@ -1252,11 +1372,13 @@ describe('index', () => {
 						},
 						ReturnValues: 'ALL_NEW',
 						TableName: 'simple-img-new-spec',
-						UpdateExpression: 'SET #foo = if_not_exists(#foo, :foo), #__ts = :__ts ADD #bar :one'
+						UpdateExpression:
+							'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
 					})
 				})
 			);
 
+			expect(item.createdAt).not.toEqual(item.updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
@@ -1264,8 +1386,8 @@ describe('index', () => {
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
-					sk: 'sk-0',
-					pk: 'pk-0'
+					pk: 'pk-0',
+					sk: 'sk-0'
 				})
 			);
 		});
@@ -1274,7 +1396,7 @@ describe('index', () => {
 			const item = await dynamodb.update(
 				{
 					pk: 'pk-0',
-					sk: 'sk-1'
+					sk: 'sk-0'
 				},
 				{
 					attributeNames: {
@@ -1297,35 +1419,43 @@ describe('index', () => {
 						ExpressionAttributeNames: {
 							'#bar': 'bar',
 							'#foo': 'foo',
-							'#__ts': '__ts'
+							'#__cr': 'createdAt',
+							'#__ts': '__ts',
+							'#__up': 'updatedAt'
 						},
 						ExpressionAttributeValues: {
 							':foo': 'foo-1',
 							':one': 1,
-							':__ts': expect.any(Number)
+							':__cr': expect.any(String),
+							':__ts': expect.any(Number),
+							':__up': expect.any(String)
 						},
 						Key: {
 							pk: 'pk-0',
-							sk: 'sk-1'
+							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_NEW',
 						TableName: 'simple-img-new-spec',
-						UpdateExpression: 'SET #foo = if_not_exists(#foo, :foo), #__ts = :__ts ADD #bar :one'
+						UpdateExpression:
+							'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
 					})
 				})
 			);
 
+			expect(item.createdAt).toEqual(item.updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
 					bar: 1,
-					sk: 'sk-1',
-					pk: 'pk-0'
+					pk: 'pk-0',
+					sk: 'sk-0'
 				})
 			);
 		});
 
 		it('should update partition key with transaction', async () => {
+			await dynamodb.batchWrite(createItems(1));
+
 			const item = await dynamodb.update(
 				{
 					pk: 'pk-0',
@@ -1379,6 +1509,8 @@ describe('index', () => {
 		});
 
 		it('should update sort key with transaction', async () => {
+			await dynamodb.batchWrite(createItems(1));
+
 			const item = await dynamodb.update(
 				{
 					pk: 'pk-0',
