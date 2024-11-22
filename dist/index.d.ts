@@ -19,6 +19,22 @@ type SharedOptions = {
     filterExpression?: string;
     index?: string;
     prefix?: boolean;
+    select?: string[];
+};
+declare const SCAN_OPTS: {
+    all?: boolean;
+    attributeNames?: Dict<string>;
+    attributeValues?: Dict<string | number>;
+    consistentRead?: boolean;
+    filterExpression?: string;
+    index?: string;
+    limit?: number;
+    onChunk?: ({ count, items }: {
+        count: number;
+        items: Dict[];
+    }) => Promise<void> | void;
+    select?: string[];
+    startKey?: Dict<string> | null;
 };
 declare const concatConditionExpression: (exp1: string, exp2: string) => string;
 declare const concatUpdateExpression: (exp1: string, exp2: string) => string;
@@ -50,6 +66,7 @@ declare class Dynamodb {
     fetch<T = Dict>(item: Dict, opts?: SharedOptions & {
         all?: boolean;
         expression?: string;
+        consistentRead?: boolean;
         onChunk?: ({ count, items }: {
             count: number;
             items: Dict[];
@@ -61,7 +78,28 @@ declare class Dynamodb {
         items: T[];
         lastEvaluatedKey: Dict<string> | null;
     }>;
-    get<T = Dict>(item: Dict, opts?: SharedOptions): Promise<T | null>;
+    scan<T = Dict>(opts?: {
+        all?: boolean;
+        attributeNames?: Dict<string>;
+        attributeValues?: Dict<string | number>;
+        consistentRead?: boolean;
+        filterExpression?: string;
+        index?: string;
+        limit?: number;
+        onChunk?: ({ count, items }: {
+            count: number;
+            items: Dict[];
+        }) => Promise<void> | void;
+        select?: string[];
+        startKey?: Dict<string> | null;
+    }): Promise<{
+        count: number;
+        items: T[];
+        lastEvaluatedKey: Dict<string> | null;
+    }>;
+    get<T = Dict>(item: Dict, opts?: SharedOptions & {
+        consistentRead?: boolean;
+    }): Promise<T | null>;
     put<T = Dict>(item: Dict, opts?: {
         attributeNames?: Dict<string>;
         attributeValues?: Dict<string | number>;
@@ -82,5 +120,5 @@ declare class Dynamodb {
     private updateWithTransaction;
     createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput>;
 }
-export { concatConditionExpression, concatUpdateExpression };
+export { concatConditionExpression, concatUpdateExpression, SCAN_OPTS };
 export default Dynamodb;

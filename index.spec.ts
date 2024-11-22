@@ -16,31 +16,39 @@ const createItems = (count: number) => {
 	});
 };
 
+const factory = () => {
+	return new Dynamodb({
+		accessKeyId: process.env.AWS_ACCESS_KEY || '',
+		region: 'us-east-1',
+		secretAccessKey: process.env.AWS_SECRET_KEY || '',
+		indexes: [
+			{
+				name: 'ls-index',
+				partition: 'pk',
+				sort: 'lsiSk',
+				type: 'S'
+			},
+			{
+				name: 'gs-index',
+				partition: 'gsiPk',
+				sort: 'gsiSk',
+				type: 'S'
+			}
+		],
+		schema: { partition: 'pk', sort: 'sk' },
+		table: 'simple-img-new-spec'
+	});
+};
+
 describe('index', () => {
 	let dynamodb: Dynamodb;
 
+	beforeAll(() => {
+		dynamodb = factory();
+	});
+
 	beforeEach(() => {
-		dynamodb = new Dynamodb({
-			accessKeyId: process.env.AWS_ACCESS_KEY || '',
-			region: 'us-east-1',
-			secretAccessKey: process.env.AWS_SECRET_KEY || '',
-			indexes: [
-				{
-					name: 'ls-index',
-					partition: 'pk',
-					sort: 'lsiSk',
-					type: 'S'
-				},
-				{
-					name: 'gs-index',
-					partition: 'gsiPk',
-					sort: 'gsiSk',
-					type: 'S'
-				}
-			],
-			schema: { partition: 'pk', sort: 'sk' },
-			table: 'simple-img-new-spec'
-		});
+		dynamodb = factory();
 	});
 
 	describe('concatConditionExpression', () => {
@@ -442,6 +450,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk'
 						},
@@ -467,6 +476,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk',
 							'#__sk': 'sk'
@@ -499,6 +509,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk',
 							'#__sk': 'sk'
@@ -526,6 +537,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk',
 							'#__sk': 'lsiSk'
@@ -554,6 +566,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'gsiPk',
 							'#__sk': 'gsiSk'
@@ -581,6 +594,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'gsiPk'
 						},
@@ -614,6 +628,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk',
 							'#lsiSk': 'lsiSk'
@@ -649,6 +664,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk',
 							'#foo': 'foo'
@@ -681,6 +697,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk'
 						},
@@ -709,6 +726,7 @@ describe('index', () => {
 			expect(dynamodb.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pk': 'pk'
 						},
@@ -752,6 +770,72 @@ describe('index', () => {
 
 			expect(count).toEqual(5);
 			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should fetch consistent', async () => {
+			const { count } = await dynamodb.fetch(
+				{
+					pk: 'pk-0'
+				},
+				{
+					consistentRead: true
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: true,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+		});
+
+		it('should fetch with select', async () => {
+			const { count, items } = await dynamodb.fetch(
+				{
+					pk: 'pk-0'
+				},
+				{
+					select: ['foo', 'gsiPk']
+				}
+			);
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ProjectionExpression: '#__pe1, #__pe2',
+						ExpressionAttributeNames: {
+							'#__pe1': 'foo',
+							'#__pe2': 'gsiPk',
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(items[0]).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0'
+				})
+			);
 		});
 	});
 
@@ -798,10 +882,12 @@ describe('index', () => {
 				{
 					attributeNames: {},
 					attributeValues: {},
+					consistentRead: false,
 					filterExpression: '',
 					index: '',
 					limit: 1,
-					prefix: false
+					prefix: false,
+					select: []
 				}
 			);
 
@@ -838,10 +924,12 @@ describe('index', () => {
 				{
 					attributeNames: { '#foo': 'foo' },
 					attributeValues: { ':foo': 'foo-0' },
+					consistentRead: false,
 					filterExpression: '#foo = :foo',
 					index: '',
 					limit: 1,
-					prefix: false
+					prefix: false,
+					select: []
 				}
 			);
 
@@ -853,6 +941,42 @@ describe('index', () => {
 					lsiSk: 'lsi-sk-0',
 					pk: 'pk-0',
 					sk: 'sk-0'
+				})
+			);
+		});
+
+		it('should get with select', async () => {
+			const item = await dynamodb.get(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					select: ['foo', 'gsiPk']
+				}
+			);
+
+			expect(dynamodb.fetch).toHaveBeenCalledWith(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					attributeNames: {},
+					attributeValues: {},
+					consistentRead: false,
+					filterExpression: '',
+					index: '',
+					limit: 1,
+					prefix: false,
+					select: ['foo', 'gsiPk']
+				}
+			);
+
+			expect(item).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0'
 				})
 			);
 		});
@@ -1103,6 +1227,108 @@ describe('index', () => {
 				partition: 'gsiPk',
 				sort: ''
 			});
+		});
+	});
+
+	describe('scan', () => {
+		beforeAll(async () => {
+			await dynamodb.batchWrite(createItems(10));
+		});
+
+		afterAll(async () => {
+			await Promise.all([
+				dynamodb.batchDelete({
+					pk: 'pk-0'
+				}),
+				dynamodb.batchDelete({
+					pk: 'pk-1'
+				})
+			]);
+		});
+
+		beforeEach(() => {
+			vi.spyOn(dynamodb.client, 'send');
+		});
+
+		it('should scan with limit/startKey', async () => {
+			const { count, lastEvaluatedKey } = await dynamodb.scan({
+				limit: 1
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						Limit: 1,
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(1);
+			expect(lastEvaluatedKey).not.toBeNull();
+
+			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await dynamodb.scan({
+				startKey: lastEvaluatedKey
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExclusiveStartKey: lastEvaluatedKey,
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count2).toEqual(9);
+			expect(lastEvaluatedKey2).toBeNull();
+		});
+
+		it('should scan all with limit/startKey and onChunk', async () => {
+			const onChunk = vi.fn();
+			const { count, lastEvaluatedKey } = await dynamodb.scan({
+				all: true,
+				onChunk,
+				limit: 2
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledTimes(6);
+			expect(onChunk).toHaveBeenCalledTimes(6);
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 2,
+				items: expect.any(Array)
+			});
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 2,
+				items: expect.any(Array)
+			});
+
+			expect(count).toEqual(10);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should scan with select', async () => {
+			const { count, items } = await dynamodb.scan({
+				select: ['foo', 'gsiPk']
+			});
+
+			expect(dynamodb.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ProjectionExpression: '#__pe1, #__pe2',
+						ExpressionAttributeNames: {
+							'#__pe1': 'foo',
+							'#__pe2': 'gsiPk'
+						},
+						TableName: 'simple-img-new-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(10);
+			expect(_.keys(items[0])).toEqual(expect.arrayContaining(['foo', 'gsiPk']));
 		});
 	});
 

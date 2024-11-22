@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, PutCommand, QueryCommand, UpdateCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand, UpdateCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { CreateTableCommand, DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 const BATCH_DELETE_OPTS = {
     attributeNames: {},
@@ -21,26 +21,42 @@ const FETCH_OPTS = {
     all: false,
     attributeNames: {},
     attributeValues: {},
+    consistentRead: false,
     expression: '',
     filterExpression: '',
     index: '',
     limit: Infinity,
     onChunk: () => { },
     prefix: false,
-    startKey: null
+    startKey: null,
+    select: []
 };
 const GET_OPTS = {
     attributeNames: {},
     attributeValues: {},
+    consistentRead: false,
     filterExpression: '',
     index: '',
-    prefix: false
+    prefix: false,
+    select: []
 };
 const PUT_OPTS = {
     attributeNames: {},
     attributeValues: {},
     conditionExpression: '',
     overwrite: false
+};
+const SCAN_OPTS = {
+    all: false,
+    attributeNames: {},
+    attributeValues: {},
+    consistentRead: false,
+    filterExpression: '',
+    index: '',
+    limit: Infinity,
+    onChunk: () => { },
+    select: [],
+    startKey: null
 };
 const UPDATE_OPTS = {
     allowUpdatePartitionAndSort: false,
@@ -217,6 +233,7 @@ class Dynamodb {
     async fetch(item, opts = FETCH_OPTS) {
         opts = _.defaults({}, opts, FETCH_OPTS);
         let queryParams = {
+            ConsistentRead: opts.consistentRead,
             ExpressionAttributeNames: {},
             ExpressionAttributeValues: {},
             KeyConditionExpression: '#__pk = :__pk',
@@ -285,6 +302,18 @@ class Dynamodb {
         if (opts.filterExpression) {
             queryParams.FilterExpression = opts.filterExpression;
         }
+        if (_.size(opts.select) > 0) {
+            queryParams.ExpressionAttributeNames = {
+                ...queryParams.ExpressionAttributeNames,
+                ..._.reduce(opts.select, (reduction, attr, index) => {
+                    reduction[`#__pe${index + 1}`] = attr;
+                    return reduction;
+                }, {})
+            };
+            queryParams.ProjectionExpression = _.map(opts.select, (attr, index) => {
+                return `#__pe${index + 1}`;
+            }).join(', ');
+        }
         let res = await this.client.send(new QueryCommand(queryParams));
         let items = res.Items || [];
         if (_.isFunction(opts.onChunk)) {
@@ -300,7 +329,74 @@ class Dynamodb {
                     ExclusiveStartKey: res.LastEvaluatedKey
                 }));
                 if (_.isFunction(opts.onChunk)) {
-                    opts.onChunk({
+                    await opts.onChunk({
+                        count: _.size(res.Items),
+                        items: res.Items || []
+                    });
+                }
+                if (res.Items) {
+                    items = [...items, ...res.Items];
+                }
+            }
+        }
+        return {
+            count: _.size(items),
+            items: items,
+            lastEvaluatedKey: res.LastEvaluatedKey || null
+        };
+    }
+    async scan(opts = SCAN_OPTS) {
+        opts = _.defaults({}, opts, SCAN_OPTS);
+        let scanParams = {
+            ConsistentRead: opts.consistentRead,
+            TableName: this.table
+        };
+        if (opts.index) {
+            scanParams.IndexName = opts.index;
+        }
+        if (opts.limit && opts.limit !== Infinity) {
+            scanParams.Limit = opts.limit;
+        }
+        if (opts.startKey) {
+            scanParams.ExclusiveStartKey = opts.startKey;
+        }
+        if (_.size(opts.attributeNames)) {
+            scanParams.ExpressionAttributeNames = opts.attributeNames;
+        }
+        if (_.size(opts.attributeValues)) {
+            scanParams.ExpressionAttributeValues = opts.attributeValues;
+        }
+        if (opts.filterExpression) {
+            scanParams.FilterExpression = opts.filterExpression;
+        }
+        if (_.size(opts.select) > 0) {
+            scanParams.ExpressionAttributeNames = {
+                ...scanParams.ExpressionAttributeNames,
+                ..._.reduce(opts.select, (reduction, attr, index) => {
+                    reduction[`#__pe${index + 1}`] = attr;
+                    return reduction;
+                }, {})
+            };
+            scanParams.ProjectionExpression = _.map(opts.select, (attr, index) => {
+                return `#__pe${index + 1}`;
+            }).join(', ');
+        }
+        let res = await this.client.send(new ScanCommand(scanParams));
+        let items = res.Items || [];
+        if (_.isFunction(opts.onChunk)) {
+            await opts.onChunk({
+                count: _.size(items),
+                items
+            });
+        }
+        if (opts.all) {
+            while (res.LastEvaluatedKey) {
+                res = await this.client.send(new ScanCommand({
+                    ...scanParams,
+                    ExclusiveStartKey: res.LastEvaluatedKey
+                }));
+                if (_.isFunction(opts.onChunk)) {
+                    await opts.onChunk({
                         count: _.size(res.Items),
                         items: res.Items || []
                     });
@@ -320,7 +416,9 @@ class Dynamodb {
         opts = _.defaults({}, opts, GET_OPTS);
         const res = await this.fetch(item, {
             ...opts,
-            limit: 1
+            consistentRead: opts.consistentRead,
+            limit: 1,
+            select: opts.select
         });
         return _.size(res.items) > 0 ? res.items[0] : null;
     }
@@ -624,5 +722,5 @@ class Dynamodb {
         return {};
     }
 }
-export { concatConditionExpression, concatUpdateExpression };
+export { concatConditionExpression, concatUpdateExpression, SCAN_OPTS };
 export default Dynamodb;

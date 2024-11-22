@@ -122,9 +122,15 @@ const deletedItem = await dynamodb.delete({
 #### 🔍 Fetch (Query) Items
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.fetch({
-	pk: 'user#123'
-});
+const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
+	{
+		pk: 'user#123'
+	},
+	{
+		consistentRead: true,
+		select: ['a', 'b']
+	}
+);
 ```
 
 #### 🔎 Fetch with Filter
@@ -150,6 +156,36 @@ const { items, count, lastEvaluatedKey } = await dynamodb.fetch(
 		startKey: lastEvaluatedKey // from previous query
 	}
 );
+```
+
+### Scan Operations
+
+#### 🔍 Scan Items
+
+```typescript
+const { items, count, lastEvaluatedKey } = await dynamodb.scan({
+	consistentRead: true,
+	select: ['a', 'b']
+});
+```
+
+#### 🔎 Scan with Filter
+
+```typescript
+const { items, count, lastEvaluatedKey } = await dynamodb.scan({
+	attributeNames: { '#foo': 'foo' },
+	attributeValues: { ':foo': 'foo-0' },
+	filterExpression: '#foo = :foo'
+});
+```
+
+#### 📄 Scan with Pagination
+
+```typescript
+const { items, count, lastEvaluatedKey } = await dynamodb.scan({
+	limit: 10,
+	startKey: lastEvaluatedKey // from previous scan
+});
 ```
 
 ### Batch Operations
