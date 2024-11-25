@@ -28,6 +28,24 @@ type Dict<T = any> = { [key: string]: T };
 type TableSchema = { partition: string; sort: string };
 type TableIndex = { name: string; partition: string; sort?: string; type: 'S' | 'N' };
 
+type ConstructorOptions = {
+	accessKeyId: string;
+	indexes?: TableIndex[];
+	region: string;
+	schema: TableSchema;
+	secretAccessKey: string;
+	table: string;
+	timestamps?: {
+		createdAtField?: string;
+		updatedAtField?: string;
+	};
+};
+
+type ConstructorTimestampOptions = {
+	createdAtField: string;
+	updatedAtField: string;
+};
+
 type SharedOptions = {
 	attributeNames?: Dict<string>;
 	attributeValues?: Dict<string | number>;
@@ -37,9 +55,54 @@ type SharedOptions = {
 	select?: string[];
 };
 
-const BATCH_DELETE_OPTS: SharedOptions & {
+type BatchDeleteOptions = SharedOptions & {
 	expression?: string;
-} = {
+};
+
+type DeleteOptions = SharedOptions & {
+	conditionExpression?: string;
+};
+
+type GetOptions = SharedOptions & {
+	consistentRead?: boolean;
+};
+
+type QueryOptions<T> = SharedOptions & {
+	all?: boolean;
+	expression?: string;
+	consistentRead?: boolean;
+	onChunk?: ({ count, items }: { count: number; items: T[] }) => Promise<void> | void;
+	limit?: number;
+	startKey?: Dict<string> | null;
+};
+
+type PutOptions = SharedOptions & {
+	conditionExpression?: string;
+	overwrite: boolean;
+};
+
+type ScanOptions<T> = {
+	all?: boolean;
+	attributeNames?: Dict<string>;
+	attributeValues?: Dict<string | number>;
+	consistentRead?: boolean;
+	filterExpression?: string;
+	index?: string;
+	limit?: number;
+	onChunk?: ({ count, items }: { count: number; items: T[] }) => Promise<void> | void;
+	select?: string[];
+	startKey?: Dict<string> | null;
+};
+
+type UpdateOptions<T> = SharedOptions & {
+	allowUpdatePartitionAndSort?: boolean;
+	conditionExpression?: string;
+	expression?: string;
+	updateFn?: (item: T) => Dict | null;
+	upsert?: boolean;
+};
+
+const DEFAULT_BATCH_DELETE_OPTIONS: BatchDeleteOptions = {
 	attributeNames: {},
 	attributeValues: {},
 	expression: '',
@@ -48,9 +111,7 @@ const BATCH_DELETE_OPTS: SharedOptions & {
 	prefix: false
 };
 
-const DELETE_OPTS: SharedOptions & {
-	conditionExpression?: string;
-} = {
+const DEFAULT_DELETE_OPTIONS: DeleteOptions = {
 	attributeNames: {},
 	attributeValues: {},
 	conditionExpression: '',
@@ -59,14 +120,7 @@ const DELETE_OPTS: SharedOptions & {
 	prefix: false
 };
 
-const QUERY_OPTS: SharedOptions & {
-	all?: boolean;
-	expression?: string;
-	consistentRead?: boolean;
-	onChunk?: ({ count, items }: { count: number; items: Dict[] }) => Promise<void> | void;
-	limit?: number;
-	startKey?: Dict<string> | null;
-} = {
+const DEFAULT_QUERY_OPTIONS: QueryOptions<Dict> = {
 	all: false,
 	attributeNames: {},
 	attributeValues: {},
@@ -81,9 +135,7 @@ const QUERY_OPTS: SharedOptions & {
 	select: []
 };
 
-const GET_OPTS: SharedOptions & {
-	consistentRead?: boolean;
-} = {
+const DEFAULT_GET_OPTIONS: GetOptions = {
 	attributeNames: {},
 	attributeValues: {},
 	consistentRead: false,
@@ -93,30 +145,14 @@ const GET_OPTS: SharedOptions & {
 	select: []
 };
 
-const PUT_OPTS: {
-	attributeNames?: Dict<string>;
-	attributeValues?: Dict<string | number>;
-	conditionExpression?: string;
-	overwrite: boolean;
-} = {
+const DEFAULT_PUT_OPTIONS: PutOptions = {
 	attributeNames: {},
 	attributeValues: {},
 	conditionExpression: '',
 	overwrite: false
 };
 
-const SCAN_OPTS: {
-	all?: boolean;
-	attributeNames?: Dict<string>;
-	attributeValues?: Dict<string | number>;
-	consistentRead?: boolean;
-	filterExpression?: string;
-	index?: string;
-	limit?: number;
-	onChunk?: ({ count, items }: { count: number; items: Dict[] }) => Promise<void> | void;
-	select?: string[];
-	startKey?: Dict<string> | null;
-} = {
+const DEFAULT_SCAN_OPTIONS: ScanOptions<Dict> = {
 	all: false,
 	attributeNames: {},
 	attributeValues: {},
@@ -129,13 +165,7 @@ const SCAN_OPTS: {
 	startKey: null
 };
 
-const UPDATE_OPTS: SharedOptions & {
-	allowUpdatePartitionAndSort?: boolean;
-	conditionExpression?: string;
-	expression?: string;
-	updateFn?: (item: Dict) => Dict | null;
-	upsert?: boolean;
-} = {
+const DEFAULT_UPDATE_OPTIONS: UpdateOptions<Dict> = {
 	allowUpdatePartitionAndSort: false,
 	attributeNames: {},
 	attributeValues: {},
@@ -148,33 +178,19 @@ const UPDATE_OPTS: SharedOptions & {
 	upsert: false
 };
 
-const CONSTRUCTOR_TIMESTAMP_OPTS: {
-	createdAtField: string;
-	updatedAtField: string;
-} = {
+const CONSTRUCTOR_TIMESTAMP_OPTIONS: ConstructorTimestampOptions = {
 	createdAtField: 'createdAt',
 	updatedAtField: 'updatedAt'
 };
 
-const CONSTRUCTOR_OPTS: {
-	accessKeyId: string;
-	indexes?: TableIndex[];
-	region: string;
-	schema: TableSchema;
-	secretAccessKey: string;
-	table: string;
-	timestamps?: {
-		createdAtField?: string;
-		updatedAtField?: string;
-	};
-} = {
+const CONSTRUCTOR_OPTIONS: ConstructorOptions = {
 	accessKeyId: '',
 	indexes: [],
 	region: '',
 	schema: { partition: 'namespace', sort: 'id' },
 	secretAccessKey: '',
 	table: '',
-	timestamps: CONSTRUCTOR_TIMESTAMP_OPTS
+	timestamps: CONSTRUCTOR_TIMESTAMP_OPTIONS
 };
 
 const concatConditionExpression = (exp1: string, exp2: string): string => {
@@ -258,26 +274,26 @@ class Dynamodb {
 		updatedAtField: string;
 	};
 
-	constructor(opts = CONSTRUCTOR_OPTS) {
-		opts = _.defaults({}, opts, CONSTRUCTOR_OPTS);
+	constructor(options = CONSTRUCTOR_OPTIONS) {
+		options = _.defaults({}, options, CONSTRUCTOR_OPTIONS);
 
 		this.client = DynamoDBDocumentClient.from(
 			new DynamoDBClient({
 				credentials: {
-					accessKeyId: opts.accessKeyId,
-					secretAccessKey: opts.secretAccessKey
+					accessKeyId: options.accessKeyId,
+					secretAccessKey: options.secretAccessKey
 				},
-				region: opts.region
+				region: options.region
 			})
 		);
 
-		this.indexes = opts.indexes || [];
-		this.schema = opts.schema;
-		this.table = opts.table;
-		this.timestamps = _.defaults({}, opts.timestamps, CONSTRUCTOR_TIMESTAMP_OPTS);
+		this.indexes = options.indexes || [];
+		this.schema = options.schema;
+		this.table = options.table;
+		this.timestamps = _.defaults({}, options.timestamps, CONSTRUCTOR_TIMESTAMP_OPTIONS);
 	}
 
-	async batchWrite<T = Dict>(items: Dict[]): Promise<T[]> {
+	async batchWrite<T extends Dict = Dict>(items: Dict[]): Promise<T[]> {
 		const { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
 		const now = new Date().toISOString();
 		const ts = _.now();
@@ -310,10 +326,10 @@ class Dynamodb {
 		return items as T[];
 	}
 
-	async batchDelete<T = Dict>(item: Dict, opts = BATCH_DELETE_OPTS): Promise<T[]> {
-		opts = _.defaults({}, opts, BATCH_DELETE_OPTS);
+	async batchDelete<T extends Dict = Dict>(item: Dict, options?: BatchDeleteOptions): Promise<T[]> {
+		options = _.defaults({}, options, DEFAULT_BATCH_DELETE_OPTIONS);
 
-		const del = async (items: Dict[]) => {
+		const del = async (items: T[]) => {
 			const chunkItems = _.map(items, item => {
 				return _.pick(item, [this.schema.partition, this.schema.sort]);
 			});
@@ -341,7 +357,7 @@ class Dynamodb {
 		};
 
 		const { items } = await this.query<T>(item, {
-			...opts,
+			...options,
 			all: true,
 			onChunk: async ({ items }) => {
 				await del(items);
@@ -351,10 +367,10 @@ class Dynamodb {
 		return items;
 	}
 
-	async delete<T = Dict>(item: Dict, opts = DELETE_OPTS): Promise<T | null> {
-		opts = _.defaults({}, opts, DELETE_OPTS);
+	async delete<T extends Dict = Dict>(item: Dict, options?: DeleteOptions): Promise<T | null> {
+		options = _.defaults({}, options, DEFAULT_DELETE_OPTIONS);
 
-		const current = await this.get(item, opts);
+		const current = await this.get(item, options);
 
 		if (!current) {
 			return null;
@@ -362,15 +378,15 @@ class Dynamodb {
 
 		let conditionExpression = '(attribute_exists(#__ts) AND #__ts = :__ts)';
 
-		if (opts.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
+		if (options.conditionExpression) {
+			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
 		}
 
 		const res = await this.client.send(
 			new DeleteCommand({
 				ConditionExpression: conditionExpression,
-				ExpressionAttributeNames: { ...opts.attributeNames, '#__ts': '__ts' },
-				ExpressionAttributeValues: { ...opts.attributeValues, ':__ts': current.__ts },
+				ExpressionAttributeNames: { ...options.attributeNames, '#__ts': '__ts' },
+				ExpressionAttributeValues: { ...options.attributeValues, ':__ts': current.__ts },
 				Key: {
 					[this.schema.partition]: current[this.schema.partition],
 					[this.schema.sort]: current[this.schema.sort]
@@ -383,14 +399,14 @@ class Dynamodb {
 		return res.Attributes as T;
 	}
 
-	async get<T = Dict>(item: Dict, opts = GET_OPTS): Promise<T | null> {
-		opts = _.defaults({}, opts, GET_OPTS);
+	async get<T extends Dict = Dict>(item: Dict, options?: GetOptions): Promise<T | null> {
+		options = _.defaults({}, options, DEFAULT_GET_OPTIONS);
 
 		const res = await this.query(item, {
-			...opts,
-			consistentRead: opts.consistentRead,
+			...options,
+			consistentRead: options.consistentRead,
 			limit: 1,
-			select: opts.select
+			select: options.select
 		});
 
 		return _.size(res.items) > 0 ? (res.items[0] as T) : null;
@@ -440,21 +456,21 @@ class Dynamodb {
 		return { index: '', schema: { partition: '', sort: '' } };
 	}
 
-	async put<T = Dict>(item: Dict, opts = PUT_OPTS): Promise<T> {
-		opts = _.defaults({}, opts, PUT_OPTS);
+	async put<T extends Dict = Dict>(item: Dict, options?: PutOptions): Promise<T> {
+		options = _.defaults({}, options, DEFAULT_PUT_OPTIONS);
 
 		let conditionExpression = '';
 
-		if (!opts.overwrite) {
+		if (!options.overwrite) {
 			conditionExpression = '(attribute_not_exists(#__pk))';
-			opts.attributeNames = {
-				...opts.attributeNames,
+			options.attributeNames = {
+				...options.attributeNames,
 				'#__pk': this.schema.partition
 			};
 		}
 
-		if (opts.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
+		if (options.conditionExpression) {
+			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
 		}
 
 		const now = new Date().toISOString();
@@ -476,12 +492,12 @@ class Dynamodb {
 			putParams.ConditionExpression = conditionExpression;
 		}
 
-		if (_.size(opts.attributeNames)) {
-			putParams.ExpressionAttributeNames = opts.attributeNames;
+		if (_.size(options.attributeNames)) {
+			putParams.ExpressionAttributeNames = options.attributeNames;
 		}
 
-		if (_.size(opts.attributeValues)) {
-			putParams.ExpressionAttributeValues = opts.attributeValues;
+		if (_.size(options.attributeValues)) {
+			putParams.ExpressionAttributeValues = options.attributeValues;
 		}
 
 		await this.client.send(new PutCommand(putParams));
@@ -489,36 +505,36 @@ class Dynamodb {
 		return item as T;
 	}
 
-	async query<T = Dict>(
+	async query<T extends Dict = Dict>(
 		item: Dict,
-		opts = QUERY_OPTS
+		options?: QueryOptions<T>
 	): Promise<{
 		count: number;
 		items: T[];
 		lastEvaluatedKey: Dict<string> | null;
 	}> {
-		opts = _.defaults({}, opts, QUERY_OPTS);
+		options = _.defaults({}, options, DEFAULT_QUERY_OPTIONS);
 
 		let queryParams: QueryCommandInput = {
-			ConsistentRead: opts.consistentRead,
+			ConsistentRead: options.consistentRead,
 			ExpressionAttributeNames: {},
 			ExpressionAttributeValues: {},
 			KeyConditionExpression: '#__pk = :__pk',
 			TableName: this.table
 		};
 
-		if (opts.limit && opts.limit !== Infinity) {
-			queryParams.Limit = opts.limit;
+		if (options.limit && options.limit !== Infinity) {
+			queryParams.Limit = options.limit;
 		}
 
-		if (opts.startKey) {
-			queryParams.ExclusiveStartKey = opts.startKey;
+		if (options.startKey) {
+			queryParams.ExclusiveStartKey = options.startKey;
 		}
 
 		let { index, schema } = this.optimisticResolveSchema(item);
 
-		if (opts.index) {
-			queryParams.IndexName = opts.index;
+		if (options.index) {
+			queryParams.IndexName = options.index;
 		}
 
 		queryParams = {
@@ -539,7 +555,7 @@ class Dynamodb {
 			}
 
 			if (schema.sort) {
-				if (opts.prefix) {
+				if (options.prefix) {
 					queryParams.KeyConditionExpression += ' AND begins_with(#__sk, :__sk)';
 				} else {
 					queryParams.KeyConditionExpression += ' AND #__sk = :__sk';
@@ -559,33 +575,33 @@ class Dynamodb {
 			}
 		}
 
-		if (_.size(opts.attributeNames)) {
+		if (_.size(options.attributeNames)) {
 			queryParams.ExpressionAttributeNames = {
 				...queryParams.ExpressionAttributeNames,
-				...opts.attributeNames
+				...options.attributeNames
 			};
 		}
 
-		if (_.size(opts.attributeValues)) {
+		if (_.size(options.attributeValues)) {
 			queryParams.ExpressionAttributeValues = {
 				...queryParams.ExpressionAttributeValues,
-				...opts.attributeValues
+				...options.attributeValues
 			};
 		}
 
-		if (opts.expression) {
-			queryParams.KeyConditionExpression = concatConditionExpression(queryParams.KeyConditionExpression || '', opts.expression);
+		if (options.expression) {
+			queryParams.KeyConditionExpression = concatConditionExpression(queryParams.KeyConditionExpression || '', options.expression);
 		}
 
-		if (opts.filterExpression) {
-			queryParams.FilterExpression = opts.filterExpression;
+		if (options.filterExpression) {
+			queryParams.FilterExpression = options.filterExpression;
 		}
 
-		if (_.size(opts.select) > 0) {
+		if (_.size(options.select) > 0) {
 			queryParams.ExpressionAttributeNames = {
 				...queryParams.ExpressionAttributeNames,
 				..._.reduce(
-					opts.select,
+					options.select,
 					(reduction, attr, index) => {
 						reduction[`#__pe${index + 1}`] = attr;
 
@@ -595,22 +611,22 @@ class Dynamodb {
 				)
 			};
 
-			queryParams.ProjectionExpression = _.map(opts.select, (attr, index) => {
+			queryParams.ProjectionExpression = _.map(options.select, (attr, index) => {
 				return `#__pe${index + 1}`;
 			}).join(', ');
 		}
 
 		let res = await this.client.send(new QueryCommand(queryParams));
-		let items = res.Items || [];
+		let items = (res.Items || []) as T[];
 
-		if (_.isFunction(opts.onChunk)) {
-			await opts.onChunk({
+		if (_.isFunction(options.onChunk)) {
+			await options.onChunk({
 				count: _.size(items),
 				items
 			});
 		}
 
-		if (opts.all) {
+		if (options.all) {
 			while (res.LastEvaluatedKey) {
 				res = await this.client.send(
 					new QueryCommand({
@@ -619,15 +635,15 @@ class Dynamodb {
 					})
 				);
 
-				if (_.isFunction(opts.onChunk)) {
-					await opts.onChunk({
+				if (_.isFunction(options.onChunk)) {
+					await options.onChunk({
 						count: _.size(res.Items),
-						items: res.Items || []
+						items: (res.Items || []) as T[]
 					});
 				}
 
 				if (res.Items) {
-					items = [...items, ...res.Items];
+					items = [...items, ...(res.Items as T[])];
 				}
 			}
 		}
@@ -639,49 +655,49 @@ class Dynamodb {
 		};
 	}
 
-	async scan<T = Dict>(
-		opts = SCAN_OPTS
+	async scan<T extends Dict = Dict>(
+		options?: ScanOptions<T>
 	): Promise<{
 		count: number;
 		items: T[];
 		lastEvaluatedKey: Dict<string> | null;
 	}> {
-		opts = _.defaults({}, opts, SCAN_OPTS);
+		options = _.defaults({}, options, DEFAULT_SCAN_OPTIONS);
 
 		let scanParams: ScanCommandInput = {
-			ConsistentRead: opts.consistentRead,
+			ConsistentRead: options.consistentRead,
 			TableName: this.table
 		};
 
-		if (opts.index) {
-			scanParams.IndexName = opts.index;
+		if (options.index) {
+			scanParams.IndexName = options.index;
 		}
 
-		if (opts.limit && opts.limit !== Infinity) {
-			scanParams.Limit = opts.limit;
+		if (options.limit && options.limit !== Infinity) {
+			scanParams.Limit = options.limit;
 		}
 
-		if (opts.startKey) {
-			scanParams.ExclusiveStartKey = opts.startKey;
+		if (options.startKey) {
+			scanParams.ExclusiveStartKey = options.startKey;
 		}
 
-		if (_.size(opts.attributeNames)) {
-			scanParams.ExpressionAttributeNames = opts.attributeNames;
+		if (_.size(options.attributeNames)) {
+			scanParams.ExpressionAttributeNames = options.attributeNames;
 		}
 
-		if (_.size(opts.attributeValues)) {
-			scanParams.ExpressionAttributeValues = opts.attributeValues;
+		if (_.size(options.attributeValues)) {
+			scanParams.ExpressionAttributeValues = options.attributeValues;
 		}
 
-		if (opts.filterExpression) {
-			scanParams.FilterExpression = opts.filterExpression;
+		if (options.filterExpression) {
+			scanParams.FilterExpression = options.filterExpression;
 		}
 
-		if (_.size(opts.select) > 0) {
+		if (_.size(options.select) > 0) {
 			scanParams.ExpressionAttributeNames = {
 				...scanParams.ExpressionAttributeNames,
 				..._.reduce(
-					opts.select,
+					options.select,
 					(reduction, attr, index) => {
 						reduction[`#__pe${index + 1}`] = attr;
 
@@ -691,22 +707,22 @@ class Dynamodb {
 				)
 			};
 
-			scanParams.ProjectionExpression = _.map(opts.select, (attr, index) => {
+			scanParams.ProjectionExpression = _.map(options.select, (attr, index) => {
 				return `#__pe${index + 1}`;
 			}).join(', ');
 		}
 
 		let res = await this.client.send(new ScanCommand(scanParams));
-		let items = res.Items || [];
+		let items = (res.Items || []) as T[];
 
-		if (_.isFunction(opts.onChunk)) {
-			await opts.onChunk({
+		if (_.isFunction(options.onChunk)) {
+			await options.onChunk({
 				count: _.size(items),
 				items
 			});
 		}
 
-		if (opts.all) {
+		if (options.all) {
 			while (res.LastEvaluatedKey) {
 				res = await this.client.send(
 					new ScanCommand({
@@ -715,15 +731,15 @@ class Dynamodb {
 					})
 				);
 
-				if (_.isFunction(opts.onChunk)) {
-					await opts.onChunk({
+				if (_.isFunction(options.onChunk)) {
+					await options.onChunk({
 						count: _.size(res.Items),
-						items: res.Items || []
+						items: (res.Items || []) as T[]
 					});
 				}
 
 				if (res.Items) {
-					items = [...items, ...res.Items];
+					items = [...items, ...(res.Items as T[])];
 				}
 			}
 		}
@@ -735,52 +751,56 @@ class Dynamodb {
 		};
 	}
 
-	async update<T = Dict>(item: Dict, opts = UPDATE_OPTS): Promise<T> {
-		opts = _.defaults({}, opts, UPDATE_OPTS);
+	async update<T extends Dict = Dict>(item: Dict, options?: UpdateOptions<T>): Promise<T> {
+		options = _.defaults({}, options, DEFAULT_UPDATE_OPTIONS);
 
 		let current = await this.get(item);
 
-		if (!current && !opts.upsert) {
+		if (!current && !options.upsert) {
 			throw new Error('Item not found');
 		}
 
 		let conditionExpression = '(attribute_not_exists(#__ts) OR #__ts = :__ts)';
 		let { createdAtField = 'createdAt', updatedAtField = 'updatedAt' } = this.timestamps;
 
-		if (opts.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, opts.conditionExpression);
+		if (options.conditionExpression) {
+			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
 		}
 
-		opts.attributeNames = {
-			...opts.attributeNames,
+		options.attributeNames = {
+			...options.attributeNames,
 			'#__ts': '__ts'
 		};
 
-		opts.attributeValues = {
-			...opts.attributeValues,
+		options.attributeValues = {
+			...options.attributeValues,
 			':__ts': current?.__ts ?? _.now()
 		};
 
-		if (opts.expression) {
+		if (options.expression) {
 			const now = new Date().toISOString();
 
-			opts.expression = concatUpdateExpression(opts.expression, 'SET #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up');
-			opts.attributeNames = {
-				...opts.attributeNames,
+			options.expression = concatUpdateExpression(
+				options.expression,
+				'SET #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up'
+			);
+
+			options.attributeNames = {
+				...options.attributeNames,
 				'#__cr': createdAtField,
 				'#__up': updatedAtField
 			};
 
-			opts.attributeValues = {
-				...opts.attributeValues,
+			options.attributeValues = {
+				...options.attributeValues,
 				':__cr': now,
 				':__up': now
 			};
 
-			if (!opts.upsert) {
+			if (!options.upsert) {
 				conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
-				opts.attributeNames = {
-					...opts.attributeNames,
+				options.attributeNames = {
+					...options.attributeNames,
 					'#__pk': this.schema.partition
 				};
 			}
@@ -788,57 +808,57 @@ class Dynamodb {
 			const res = await this.client.send(
 				new UpdateCommand({
 					ConditionExpression: conditionExpression,
-					ExpressionAttributeNames: opts.attributeNames,
-					ExpressionAttributeValues: opts.attributeValues,
+					ExpressionAttributeNames: options.attributeNames,
+					ExpressionAttributeValues: options.attributeValues,
 					Key: {
 						[this.schema.partition]: item[this.schema.partition],
 						[this.schema.sort]: item[this.schema.sort]
 					},
 					ReturnValues: 'ALL_NEW',
 					TableName: this.table,
-					UpdateExpression: opts.expression
+					UpdateExpression: options.expression
 				})
 			);
 
 			return res.Attributes as T;
 		}
 
-		if (_.isFunction(opts.updateFn)) {
-			const updateFnRes = opts.updateFn(_.isNil(current) ? item : current);
+		if (_.isFunction(options.updateFn)) {
+			const updateFnRes = options.updateFn((_.isNil(current) ? item : current) as T);
 
 			if (!_.isNil(updateFnRes)) {
 				item = updateFnRes;
 			}
 		}
 
-		if (current && opts.allowUpdatePartitionAndSort) {
+		if (current && options.allowUpdatePartitionAndSort) {
 			if (item[this.schema.partition] !== current[this.schema.partition] || item[this.schema.sort] !== current[this.schema.sort]) {
 				return this.updateWithTransaction(item, current, {
-					attributeNames: opts.attributeNames,
-					attributeValues: opts.attributeValues,
+					attributeNames: options.attributeNames,
+					attributeValues: options.attributeValues,
 					conditionExpression
 				});
 			}
 		}
 
-		if (!opts.upsert) {
+		if (!options.upsert) {
 			conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
-			opts.attributeNames = {
-				...opts.attributeNames,
+			options.attributeNames = {
+				...options.attributeNames,
 				'#__pk': this.schema.partition,
 				'#__ts': '__ts'
 			};
 		}
 
 		return this.put(item, {
-			attributeNames: opts.attributeNames,
-			attributeValues: opts.attributeValues,
+			attributeNames: options.attributeNames,
+			attributeValues: options.attributeValues,
 			conditionExpression,
 			overwrite: true
 		});
 	}
 
-	private async updateWithTransaction<T = Dict>(item: Dict, current: Dict, opts: typeof UPDATE_OPTS): Promise<T> {
+	private async updateWithTransaction<T extends Dict = Dict>(item: Dict, current: Dict, options?: UpdateOptions<T>): Promise<T> {
 		const deleteParams = {
 			Delete: {
 				Key: {
@@ -854,16 +874,16 @@ class Dynamodb {
 			TableName: this.table
 		};
 
-		if (opts.conditionExpression) {
-			putParams.ConditionExpression = opts.conditionExpression;
+		if (options?.conditionExpression) {
+			putParams.ConditionExpression = options.conditionExpression;
 		}
 
-		if (_.size(opts.attributeNames)) {
-			putParams.ExpressionAttributeNames = opts.attributeNames;
+		if (options?.attributeNames && _.size(options.attributeNames)) {
+			putParams.ExpressionAttributeNames = options.attributeNames;
 		}
 
-		if (_.size(opts.attributeValues)) {
-			putParams.ExpressionAttributeValues = opts.attributeValues;
+		if (options?.attributeValues && _.size(options.attributeValues)) {
+			putParams.ExpressionAttributeValues = options.attributeValues;
 		}
 
 		await this.client.send(
@@ -883,6 +903,7 @@ class Dynamodb {
 				})
 			);
 		} catch (err) {
+			console.log(err);
 			const inexistentTable = (err as Error).message.includes('resource not found');
 
 			if (inexistentTable) {
@@ -1009,5 +1030,5 @@ class Dynamodb {
 	}
 }
 
-export { concatConditionExpression, concatUpdateExpression, SCAN_OPTS };
+export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;

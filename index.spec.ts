@@ -36,15 +36,16 @@ const factory = () => {
 			}
 		],
 		schema: { partition: 'pk', sort: 'sk' },
-		table: 'simple-img-new-spec'
+		table: 'use-dynamodb-spec'
 	});
 };
 
-describe('index', () => {
+describe('/index.ts', () => {
 	let dynamodb: Dynamodb;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		dynamodb = factory();
+		await dynamodb.createTable();
 	});
 
 	beforeEach(() => {
@@ -72,9 +73,9 @@ describe('index', () => {
 			const res = await dynamodb.createTable();
 
 			if ('Table' in res) {
-				expect(res.Table?.TableName).toEqual('simple-img-new-spec');
+				expect(res.Table?.TableName).toEqual('use-dynamodb-spec');
 			} else if ('TableDescription' in res) {
-				expect(res.TableDescription?.TableName).toEqual('simple-img-new-spec');
+				expect(res.TableDescription?.TableName).toEqual('use-dynamodb-spec');
 			} else {
 				throw new Error('Table not created');
 			}
@@ -240,7 +241,7 @@ describe('index', () => {
 							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_OLD',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -298,7 +299,7 @@ describe('index', () => {
 							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_OLD',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -351,7 +352,7 @@ describe('index', () => {
 							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_OLD',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -404,7 +405,7 @@ describe('index', () => {
 							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_OLD',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -664,7 +665,7 @@ describe('index', () => {
 							sk: 'sk-0',
 							updatedAt: expect.any(String)
 						},
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -717,7 +718,7 @@ describe('index', () => {
 							sk: 'sk-0',
 							updatedAt: expect.any(String)
 						},
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -760,7 +761,7 @@ describe('index', () => {
 							sk: 'sk-1',
 							updatedAt: expect.any(String)
 						},
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -798,7 +799,7 @@ describe('index', () => {
 							sk: 'sk-3',
 							updatedDate: expect.any(String)
 						},
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -849,7 +850,7 @@ describe('index', () => {
 							':__pk': 'pk-0'
 						},
 						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -877,7 +878,7 @@ describe('index', () => {
 							':__sk': 'sk-0'
 						},
 						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -910,7 +911,7 @@ describe('index', () => {
 							':__sk': 'sk-'
 						},
 						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -939,7 +940,7 @@ describe('index', () => {
 						},
 						IndexName: 'ls-index',
 						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -968,7 +969,7 @@ describe('index', () => {
 						},
 						IndexName: 'gs-index',
 						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -994,7 +995,7 @@ describe('index', () => {
 						},
 						IndexName: 'gs-index',
 						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1031,7 +1032,7 @@ describe('index', () => {
 						},
 						IndexName: 'ls-index',
 						KeyConditionExpression: '#__pk = :__pk AND #lsiSk BETWEEN :from AND :to',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1066,7 +1067,7 @@ describe('index', () => {
 						},
 						FilterExpression: '#foo = :foo',
 						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1097,7 +1098,7 @@ describe('index', () => {
 						},
 						KeyConditionExpression: '#__pk = :__pk',
 						Limit: 1,
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1126,7 +1127,7 @@ describe('index', () => {
 						},
 						ExclusiveStartKey: { pk: 'pk-0', sk: 'sk-0' },
 						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1184,7 +1185,7 @@ describe('index', () => {
 							':__pk': 'pk-0'
 						},
 						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1215,7 +1216,7 @@ describe('index', () => {
 							':__pk': 'pk-0'
 						},
 						KeyConditionExpression: '#__pk = :__pk',
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1260,7 +1261,7 @@ describe('index', () => {
 					input: expect.objectContaining({
 						ConsistentRead: false,
 						Limit: 1,
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1277,7 +1278,7 @@ describe('index', () => {
 					input: expect.objectContaining({
 						ConsistentRead: false,
 						ExclusiveStartKey: lastEvaluatedKey,
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1322,7 +1323,7 @@ describe('index', () => {
 							'#__pe1': 'foo',
 							'#__pe2': 'gsiPk'
 						},
-						TableName: 'simple-img-new-spec'
+						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
@@ -1597,7 +1598,7 @@ describe('index', () => {
 							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_NEW',
-						TableName: 'simple-img-new-spec',
+						TableName: 'use-dynamodb-spec',
 						UpdateExpression:
 							'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
 					})
@@ -1661,7 +1662,7 @@ describe('index', () => {
 							sk: 'sk-0'
 						},
 						ReturnValues: 'ALL_NEW',
-						TableName: 'simple-img-new-spec',
+						TableName: 'use-dynamodb-spec',
 						UpdateExpression:
 							'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
 					})
@@ -1708,7 +1709,7 @@ describe('index', () => {
 										pk: 'pk-0',
 										sk: 'sk-0'
 									},
-									TableName: 'simple-img-new-spec'
+									TableName: 'use-dynamodb-spec'
 								})
 							}),
 							expect.objectContaining({
@@ -1718,7 +1719,7 @@ describe('index', () => {
 										sk: 'sk-0',
 										__ts: expect.any(Number)
 									}),
-									TableName: 'simple-img-new-spec'
+									TableName: 'use-dynamodb-spec'
 								})
 							})
 						])
@@ -1763,7 +1764,7 @@ describe('index', () => {
 										pk: 'pk-0',
 										sk: 'sk-0'
 									},
-									TableName: 'simple-img-new-spec'
+									TableName: 'use-dynamodb-spec'
 								})
 							}),
 							expect.objectContaining({
@@ -1773,7 +1774,7 @@ describe('index', () => {
 										sk: 'sk-1',
 										__ts: expect.any(Number)
 									}),
-									TableName: 'simple-img-new-spec'
+									TableName: 'use-dynamodb-spec'
 								})
 							})
 						])
