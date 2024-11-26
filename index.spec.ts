@@ -1,7 +1,16 @@
 import _ from 'lodash';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
-import Dynamodb, { concatConditionExpression, concatUpdateExpression } from './index';
+import Db, { concatConditionExpression, concatUpdateExpression } from './index';
+
+type DbRecord = {
+	foo: string;
+	gsiPk: string;
+	gsiSk: string;
+	lsiSk: string;
+	pk: string;
+	sk: string;
+};
 
 const createItems = (count: number) => {
 	return _.times(count, i => {
@@ -16,8 +25,12 @@ const createItems = (count: number) => {
 	});
 };
 
-const factory = () => {
-	return new Dynamodb({
+const factory = ({
+	onChange
+}: {
+	onChange: Mock
+}) => {
+	return new Db<DbRecord>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
 		region: 'us-east-1',
 		secretAccessKey: process.env.AWS_SECRET_KEY || '',
@@ -35,21 +48,26 @@ const factory = () => {
 				type: 'S'
 			}
 		],
+		onChange,
 		schema: { partition: 'pk', sort: 'sk' },
 		table: 'use-dynamodb-spec'
 	});
 };
 
 describe('/index.ts', () => {
-	let dynamodb: Dynamodb;
+	let db: Db<DbRecord>;
+	let onChangeMock: Mock;
 
 	beforeAll(async () => {
-		dynamodb = factory();
-		await dynamodb.createTable();
+		onChangeMock = vi.fn();
+		db = factory({ onChange: onChangeMock });
+		
+		await db.createTable();
 	});
 
 	beforeEach(() => {
-		dynamodb = factory();
+		onChangeMock = vi.fn();
+		db = factory({ onChange: onChangeMock });
 	});
 
 	describe('concatConditionExpression', () => {
@@ -70,7 +88,7 @@ describe('/index.ts', () => {
 
 	describe('createTable', () => {
 		it('should works', async () => {
-			const res = await dynamodb.createTable();
+			const res = await db.createTable();
 
 			if ('Table' in res) {
 				expect(res.Table?.TableName).toEqual('use-dynamodb-spec');
@@ -82,25 +100,25 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('batchWrite / batchDelete', () => {
+	describe('batchWrite / batchDelete / deleteMany', () => {
 		beforeEach(async () => {
-			vi.spyOn(dynamodb, 'query');
-			vi.spyOn(dynamodb.client, 'send');
+			vi.spyOn(db, 'query');
+			vi.spyOn(db.client, 'send');
 		});
 
 		afterAll(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
 		});
 
 		it('should batch write and batch delete', async () => {
-			const wroteItems = await dynamodb.batchWrite(createItems(52));
+			const wroteItems = await db.batchWrite(createItems(52));
 
 			expect(
 				_.every(wroteItems, item => {
@@ -108,14 +126,14 @@ describe('/index.ts', () => {
 				})
 			).toBeTruthy();
 
-			expect(dynamodb.client.send).toHaveBeenCalledTimes(3);
-			vi.mocked(dynamodb.client.send).mockClear();
+			expect(db.client.send).toHaveBeenCalledTimes(3);
+			vi.mocked(db.client.send).mockClear();
 
 			const deleteItems = await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete(
+				db.deleteMany(
 					{
 						pk: 'pk-1'
 					},
@@ -127,9 +145,9 @@ describe('/index.ts', () => {
 				)
 			]);
 
-			expect(dynamodb.client.send).toHaveBeenCalledTimes(6);
-			expect(dynamodb.query).toHaveBeenCalledTimes(2);
-			expect(dynamodb.query).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledTimes(6);
+			expect(db.query).toHaveBeenCalledTimes(2);
+			expect(db.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0'
 				},
@@ -144,7 +162,7 @@ describe('/index.ts', () => {
 					prefix: false
 				}
 			);
-			expect(dynamodb.query).toHaveBeenCalledWith(
+			expect(db.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-1'
 				},
@@ -164,40 +182,41 @@ describe('/index.ts', () => {
 			expect(deleteItems[1]).toHaveLength(26);
 
 			const res = await Promise.all([
-				dynamodb.query({
+				db.query({
 					pk: 'pk-0'
 				}),
-				dynamodb.query({
+				db.query({
 					pk: 'pk-1'
 				})
 			]);
 
 			expect(res[0].items).toHaveLength(0);
 			expect(res[1].items).toHaveLength(0);
+			expect(onChangeMock).toHaveBeenCalledTimes(3);
 		});
 	});
 
 	describe('delete', () => {
 		beforeEach(async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 
-			vi.spyOn(dynamodb, 'get');
-			vi.spyOn(dynamodb.client, 'send');
+			vi.spyOn(db, 'get');
+			vi.spyOn(db.client, 'send');
 		});
 
 		afterAll(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
 		});
 
 		it('should return null if item not found', async () => {
-			const item = await dynamodb.delete({
+			const item = await db.delete({
 				pk: 'pk-0',
 				sk: 'sk-100'
 			});
@@ -206,12 +225,12 @@ describe('/index.ts', () => {
 		});
 
 		it('should delete', async () => {
-			const item = await dynamodb.delete({
+			const item = await db.delete({
 				pk: 'pk-0',
 				sk: 'sk-0'
 			});
 
-			expect(dynamodb.get).toHaveBeenCalledWith(
+			expect(db.get).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -226,7 +245,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
@@ -256,10 +275,12 @@ describe('/index.ts', () => {
 					pk: 'pk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('should delete by prefix', async () => {
-			const item = await dynamodb.delete(
+			const item = await db.delete(
 				{
 					pk: 'pk-0',
 					sk: 'sk-'
@@ -269,7 +290,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.get).toHaveBeenCalledWith(
+			expect(db.get).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-'
@@ -284,7 +305,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
@@ -314,15 +335,17 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('should delete by local secondary index', async () => {
-			const item = await dynamodb.delete({
+			const item = await db.delete({
 				lsiSk: 'lsi-sk-0',
 				pk: 'pk-0'
 			});
 
-			expect(dynamodb.get).toHaveBeenCalledWith(
+			expect(db.get).toHaveBeenCalledWith(
 				{
 					lsiSk: 'lsi-sk-0',
 					pk: 'pk-0'
@@ -337,7 +360,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
@@ -367,15 +390,17 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('should delete by global secondary index', async () => {
-			const item = await dynamodb.delete({
+			const item = await db.delete({
 				gsiPk: 'gsi-pk-0',
 				gsiSk: 'gsi-sk-0'
 			});
 
-			expect(dynamodb.get).toHaveBeenCalledWith(
+			expect(db.get).toHaveBeenCalledWith(
 				{
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0'
@@ -390,7 +415,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
@@ -420,31 +445,33 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 	});
 
 	describe('get', () => {
 		beforeAll(async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 		});
 
 		afterAll(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
 		});
 
 		beforeEach(() => {
-			vi.spyOn(dynamodb, 'query');
+			vi.spyOn(db, 'query');
 		});
 
 		it('should return null if not found', async () => {
-			const item = await dynamodb.get({
+			const item = await db.get({
 				pk: 'pk-0',
 				sk: 'sk-100'
 			});
@@ -453,12 +480,12 @@ describe('/index.ts', () => {
 		});
 
 		it('should get', async () => {
-			const item = await dynamodb.get({
+			const item = await db.get({
 				pk: 'pk-0',
 				sk: 'sk-0'
 			});
 
-			expect(dynamodb.query).toHaveBeenCalledWith(
+			expect(db.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -488,7 +515,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get with options', async () => {
-			const item = await dynamodb.get(
+			const item = await db.get(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -500,7 +527,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.query).toHaveBeenCalledWith(
+			expect(db.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -530,7 +557,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get with select', async () => {
-			const item = await dynamodb.get(
+			const item = await db.get(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -540,7 +567,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.query).toHaveBeenCalledWith(
+			expect(db.query).toHaveBeenCalledWith(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -568,7 +595,7 @@ describe('/index.ts', () => {
 
 	describe('optimisticResolveSchema', () => {
 		it('should resolve', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+			const { index, schema } = db.optimisticResolveSchema({
 				pk: 'pk-0',
 				sk: 'sk-0'
 			});
@@ -581,7 +608,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should resolve only partition', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+			const { index, schema } = db.optimisticResolveSchema({
 				pk: 'pk-0'
 			});
 
@@ -593,7 +620,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should resolve by local secondary index', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+			const { index, schema } = db.optimisticResolveSchema({
 				pk: 'pk-0',
 				lsiSk: 'lsi-sk-0'
 			});
@@ -606,7 +633,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should resolve by global secondary index', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+			const { index, schema } = db.optimisticResolveSchema({
 				gsiPk: 'gsi-pk-0',
 				gsiSk: 'gsi-sk-0'
 			});
@@ -619,7 +646,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should resolve only partition by global secondary index', () => {
-			const { index, schema } = dynamodb.optimisticResolveSchema({
+			const { index, schema } = db.optimisticResolveSchema({
 				gsiPk: 'gsi-pk-0'
 			});
 
@@ -633,55 +660,57 @@ describe('/index.ts', () => {
 
 	describe('put', () => {
 		beforeEach(() => {
-			vi.spyOn(dynamodb.client, 'send');
+			vi.spyOn(db.client, 'send');
 		});
 
 		afterAll(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
 		});
 
 		it('should put', async () => {
-			const item = await dynamodb.put({
+			const item = await db.put({
 				sk: 'sk-0',
 				pk: 'pk-0'
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_not_exists(#__pk))',
 						ExpressionAttributeNames: { '#__pk': 'pk' },
 						Item: {
+							__createdAt: expect.any(String),
 							__ts: expect.any(Number),
-							createdAt: expect.any(String),
+							__updatedAt: expect.any(String),
 							pk: 'pk-0',
-							sk: 'sk-0',
-							updatedAt: expect.any(String)
+							sk: 'sk-0'
 						},
 						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
 
-			expect(item.createdAt).toEqual(item.updatedAt);
+			expect(item.__createdAt).toEqual(item.__updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
 		it('should throw on overwrite', async () => {
 			try {
-				await dynamodb.put({
+				await db.put({
 					pk: 'pk-0',
 					sk: 'sk-0'
 				});
@@ -693,12 +722,12 @@ describe('/index.ts', () => {
 		});
 
 		it('should put ovewriting', async () => {
-			const item = await dynamodb.get({
+			const item = await db.get({
 				pk: 'pk-0',
 				sk: 'sk-0'
 			});
 
-			const overwriteItem = await dynamodb.put(
+			const overwriteItem = await db.put(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -708,15 +737,15 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						Item: {
+							__createdAt: expect.any(String),
 							__ts: expect.any(Number),
-							createdAt: expect.any(String),
+							__updatedAt: expect.any(String),
 							pk: 'pk-0',
-							sk: 'sk-0',
-							updatedAt: expect.any(String)
+							sk: 'sk-0'
 						},
 						TableName: 'use-dynamodb-spec'
 					})
@@ -724,18 +753,20 @@ describe('/index.ts', () => {
 			);
 
 			expect(overwriteItem.__ts).toBeGreaterThan(item!.__ts);
-			expect(overwriteItem.createdAt).not.toEqual(item!.createdAt);
-			expect(overwriteItem.createdAt).toEqual(overwriteItem.updatedAt);
+			expect(overwriteItem.__createdAt).not.toEqual(item!.__createdAt);
+			expect(overwriteItem.__createdAt).toEqual(overwriteItem.__updatedAt);
 			expect(overwriteItem).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
 		it('should put with options', async () => {
-			const item = await dynamodb.put(
+			const item = await db.put(
 				{
 					pk: 'pk-0',
 					sk: 'sk-1'
@@ -748,98 +779,62 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConditionExpression: '(attribute_not_exists(#__pk)) AND #foo <> :foo',
 						ExpressionAttributeNames: { '#foo': 'foo', '#__pk': 'pk' },
 						ExpressionAttributeValues: { ':foo': 'foo-0' },
 						Item: {
+							__createdAt: expect.any(String),
 							__ts: expect.any(Number),
-							createdAt: expect.any(String),
+							__updatedAt: expect.any(String),
 							pk: 'pk-0',
-							sk: 'sk-1',
-							updatedAt: expect.any(String)
+							sk: 'sk-1'
 						},
 						TableName: 'use-dynamodb-spec'
 					})
 				})
 			);
 
-			expect(item.createdAt).toEqual(item.updatedAt);
+			expect(item.__createdAt).toEqual(item.__updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-1'
 				})
 			);
-		});
 
-		it('should put with custom timestamp field names', async () => {
-			// @ts-expect-error
-			dynamodb.timestamps = {
-				createdAtField: 'createdDate',
-				updatedAtField: 'updatedDate'
-			};
-
-			const item = await dynamodb.put({
-				pk: 'pk-0',
-				sk: 'sk-3'
-			});
-
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#__pk))',
-						ExpressionAttributeNames: { '#__pk': 'pk' },
-						Item: {
-							__ts: expect.any(Number),
-							createdDate: expect.any(String),
-							pk: 'pk-0',
-							sk: 'sk-3',
-							updatedDate: expect.any(String)
-						},
-						TableName: 'use-dynamodb-spec'
-					})
-				})
-			);
-
-			expect(item.createdDate).toEqual(item.updatedDate);
-			expect(item).toEqual(
-				expect.objectContaining({
-					pk: 'pk-0',
-					sk: 'sk-3'
-				})
-			);
+			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 	});
 
 	describe('query', () => {
 		beforeAll(async () => {
-			await dynamodb.batchWrite(createItems(10));
+			await db.batchWrite(createItems(10));
 		});
 
 		afterAll(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
 		});
 
 		beforeEach(() => {
-			vi.spyOn(dynamodb.client, 'send');
+			vi.spyOn(db.client, 'send');
 		});
 
 		it('should query with partition', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query({
+			const { count, lastEvaluatedKey } = await db.query({
 				pk: 'pk-0'
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -860,12 +855,12 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by partition/sort', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query({
+			const { count, lastEvaluatedKey } = await db.query({
 				pk: 'pk-0',
 				sk: 'sk-0'
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -888,7 +883,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by partition/sort with prefix', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query(
+			const { count, lastEvaluatedKey } = await db.query(
 				{
 					pk: 'pk-0',
 					sk: 'sk-'
@@ -898,7 +893,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -921,12 +916,12 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by local secondary index', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query({
+			const { count, lastEvaluatedKey } = await db.query({
 				pk: 'pk-0',
 				lsiSk: 'lsi-sk-0'
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -950,12 +945,12 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by global secondary index', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query({
+			const { count, lastEvaluatedKey } = await db.query({
 				gsiPk: 'gsi-pk-0',
 				gsiSk: 'gsi-sk-0'
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -979,11 +974,11 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by global secondary index with partition', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query({
+			const { count, lastEvaluatedKey } = await db.query({
 				gsiPk: 'gsi-pk-0'
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1005,7 +1000,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by custom expression', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query(
+			const { count, lastEvaluatedKey } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1017,7 +1012,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1042,7 +1037,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should query by filterExpression', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query(
+			const { count, lastEvaluatedKey } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1053,7 +1048,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1077,7 +1072,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should query with limit/startKey', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.query(
+			const { count, lastEvaluatedKey } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1086,7 +1081,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1106,7 +1101,7 @@ describe('/index.ts', () => {
 			expect(count).toEqual(1);
 			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-0' });
 
-			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await dynamodb.query(
+			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1115,7 +1110,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1138,7 +1133,7 @@ describe('/index.ts', () => {
 
 		it('should query all with limit/startKey and onChunk', async () => {
 			const onChunk = vi.fn();
-			const { count, lastEvaluatedKey } = await dynamodb.query(
+			const { count, lastEvaluatedKey } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1149,7 +1144,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledTimes(3);
+			expect(db.client.send).toHaveBeenCalledTimes(3);
 			expect(onChunk).toHaveBeenCalledTimes(3);
 			expect(onChunk).toHaveBeenCalledWith({
 				count: 2,
@@ -1165,7 +1160,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should query consistent', async () => {
-			const { count } = await dynamodb.query(
+			const { count } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1174,7 +1169,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: true,
@@ -1194,7 +1189,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should query with select', async () => {
-			const { count, items } = await dynamodb.query(
+			const { count, items } = await db.query(
 				{
 					pk: 'pk-0'
 				},
@@ -1203,7 +1198,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ProjectionExpression: '#__pe1, #__pe2',
@@ -1233,30 +1228,30 @@ describe('/index.ts', () => {
 
 	describe('scan', () => {
 		beforeAll(async () => {
-			await dynamodb.batchWrite(createItems(10));
+			await db.batchWrite(createItems(10));
 		});
 
 		afterAll(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
 		});
 
 		beforeEach(() => {
-			vi.spyOn(dynamodb.client, 'send');
+			vi.spyOn(db.client, 'send');
 		});
 
 		it('should scan with limit/startKey', async () => {
-			const { count, lastEvaluatedKey } = await dynamodb.scan({
+			const { count, lastEvaluatedKey } = await db.scan({
 				limit: 1
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1269,11 +1264,11 @@ describe('/index.ts', () => {
 			expect(count).toEqual(1);
 			expect(lastEvaluatedKey).not.toBeNull();
 
-			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await dynamodb.scan({
+			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await db.scan({
 				startKey: lastEvaluatedKey
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
@@ -1289,13 +1284,13 @@ describe('/index.ts', () => {
 
 		it('should scan all with limit/startKey and onChunk', async () => {
 			const onChunk = vi.fn();
-			const { count, lastEvaluatedKey } = await dynamodb.scan({
+			const { count, lastEvaluatedKey } = await db.scan({
 				all: true,
 				onChunk,
 				limit: 2
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledTimes(6);
+			expect(db.client.send).toHaveBeenCalledTimes(6);
 			expect(onChunk).toHaveBeenCalledTimes(6);
 			expect(onChunk).toHaveBeenCalledWith({
 				count: 2,
@@ -1311,11 +1306,11 @@ describe('/index.ts', () => {
 		});
 
 		it('should scan with select', async () => {
-			const { count, items } = await dynamodb.scan({
+			const { count, items } = await db.scan({
 				select: ['foo', 'gsiPk']
 			});
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ProjectionExpression: '#__pe1, #__pe2',
@@ -1335,16 +1330,16 @@ describe('/index.ts', () => {
 
 	describe('update', () => {
 		beforeEach(async () => {
-			vi.spyOn(dynamodb, 'put');
-			vi.spyOn(dynamodb.client, 'send');
+			vi.spyOn(db, 'put');
+			vi.spyOn(db.client, 'send');
 		});
 
 		afterEach(async () => {
 			await Promise.all([
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-0'
 				}),
-				dynamodb.batchDelete({
+				db.deleteMany({
 					pk: 'pk-1'
 				})
 			]);
@@ -1352,7 +1347,7 @@ describe('/index.ts', () => {
 
 		it('should throw if item not found', async () => {
 			try {
-				await dynamodb.update(
+				await db.update(
 					{
 						pk: 'pk-0',
 						sk: 'sk-1'
@@ -1374,9 +1369,9 @@ describe('/index.ts', () => {
 		});
 
 		it('should update', async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 
-			const item = await dynamodb.update(
+			const item = await db.update(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -1391,90 +1386,30 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.put).toHaveBeenCalledWith(
+			expect(db.put).toHaveBeenCalledWith(
 				{
+					__createdAt: expect.any(String),
 					__ts: expect.any(Number),
-					createdAt: expect.any(String),
+					__updatedAt: expect.any(String),
 					foo: 'foo-1',
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0',
-					updatedAt: expect.any(String)
-				},
-				{
-					attributeNames: {
-						'#__pk': 'pk',
-						'#__ts': '__ts'
-					},
-					attributeValues: { ':__ts': expect.any(Number) },
-					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
-					overwrite: true
-				}
-			);
-
-			expect(item.updatedAt).not.toEqual(item.createdAt);
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-1',
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					sk: 'sk-0',
-					pk: 'pk-0'
-				})
-			);
-		});
-
-		it('should use custom update timestamp field', async () => {
-			// @ts-expect-error
-			dynamodb.timestamps = {
-				createdAtField: 'createdDate',
-				updatedAtField: 'updatedDate'
-			};
-
-			await dynamodb.batchWrite(createItems(1));
-
-			const item = await dynamodb.update(
-				{
 					pk: 'pk-0',
 					sk: 'sk-0'
 				},
 				{
-					updateFn: item => {
-						return {
-							...item,
-							foo: 'foo-1'
-						};
-					}
-				}
-			);
-
-			expect(dynamodb.put).toHaveBeenCalledWith(
-				{
-					__ts: expect.any(Number),
-					createdDate: expect.any(String),
-					foo: 'foo-1',
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0',
-					updatedDate: expect.any(String)
-				},
-				{
 					attributeNames: {
 						'#__pk': 'pk',
 						'#__ts': '__ts'
 					},
-					attributeValues: { ':__ts': expect.any(Number) },
-					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
+					attributeValues: { ':__curr_ts': expect.any(Number) },
+					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__curr_ts))',
 					overwrite: true
 				}
 			);
 
-			expect(item.createdDate).not.toEqual(item.updatedDate);
+			expect(item.__updatedAt).not.toEqual(item.__createdAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
@@ -1485,13 +1420,15 @@ describe('/index.ts', () => {
 					pk: 'pk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('should not update partition and sort', async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 
 			try {
-				await dynamodb.update(
+				await db.update(
 					{
 						pk: 'pk-0',
 						sk: 'sk-0'
@@ -1513,7 +1450,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should upsert', async () => {
-			const item = await dynamodb.update(
+			const item = await db.update(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -1529,7 +1466,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.put).toHaveBeenCalledWith(
+			expect(db.put).toHaveBeenCalledWith(
 				{
 					foo: 'foo-1',
 					pk: 'pk-0',
@@ -1537,13 +1474,13 @@ describe('/index.ts', () => {
 				},
 				{
 					attributeNames: { '#__ts': '__ts' },
-					attributeValues: { ':__ts': expect.any(Number) },
-					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__ts)',
+					attributeValues: { ':__curr_ts': expect.any(Number) },
+					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
 					overwrite: true
 				}
 			);
 
-			expect(item.createdAt).toEqual(item.updatedAt);
+			expect(item.__createdAt).toEqual(item.__updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
@@ -1551,12 +1488,14 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
 		it('should update with expression', async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 
-			const item = await dynamodb.update(
+			const item = await db.update(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -1574,15 +1513,15 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__ts))',
+						ConditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__curr_ts))',
 						ExpressionAttributeNames: {
-							'#__cr': 'createdAt',
+							'#__cr': '__createdAt',
 							'#__pk': 'pk',
 							'#__ts': '__ts',
-							'#__up': 'updatedAt',
+							'#__up': '__updatedAt',
 							'#bar': 'bar',
 							'#foo': 'foo'
 						},
@@ -1590,6 +1529,7 @@ describe('/index.ts', () => {
 							':foo': 'foo-1',
 							':one': 1,
 							':__cr': expect.any(String),
+							':__curr_ts': expect.any(Number),
 							':__ts': expect.any(Number),
 							':__up': expect.any(String)
 						},
@@ -1605,7 +1545,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item.createdAt).not.toEqual(item.updatedAt);
+			expect(item.__createdAt).not.toEqual(item.__updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
@@ -1617,10 +1557,12 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('should upsert with expression', async () => {
-			const item = await dynamodb.update(
+			const item = await db.update(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -1639,21 +1581,22 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__ts)',
+						ConditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
 						ExpressionAttributeNames: {
 							'#bar': 'bar',
 							'#foo': 'foo',
-							'#__cr': 'createdAt',
+							'#__cr': '__createdAt',
 							'#__ts': '__ts',
-							'#__up': 'updatedAt'
+							'#__up': '__updatedAt'
 						},
 						ExpressionAttributeValues: {
 							':foo': 'foo-1',
 							':one': 1,
 							':__cr': expect.any(String),
+							':__curr_ts': expect.any(Number),
 							':__ts': expect.any(Number),
 							':__up': expect.any(String)
 						},
@@ -1669,7 +1612,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item.createdAt).toEqual(item.updatedAt);
+			expect(item.__createdAt).toEqual(item.__updatedAt);
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
@@ -1678,12 +1621,14 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
 		it('should update partition key with transaction', async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 
-			const item = await dynamodb.update(
+			const item = await db.update(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -1699,7 +1644,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						TransactItems: expect.arrayContaining([
@@ -1733,12 +1678,14 @@ describe('/index.ts', () => {
 					sk: 'sk-0'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('should update sort key with transaction', async () => {
-			await dynamodb.batchWrite(createItems(1));
+			await db.batchWrite(createItems(1));
 
-			const item = await dynamodb.update(
+			const item = await db.update(
 				{
 					pk: 'pk-0',
 					sk: 'sk-0'
@@ -1754,7 +1701,7 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(dynamodb.client.send).toHaveBeenCalledWith(
+			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						TransactItems: expect.arrayContaining([
@@ -1788,6 +1735,8 @@ describe('/index.ts', () => {
 					sk: 'sk-1'
 				})
 			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 	});
 });
