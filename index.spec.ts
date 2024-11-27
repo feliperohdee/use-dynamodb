@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import _, { before } from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Db, { concatConditionExpression, concatUpdateExpression } from './index';
@@ -25,11 +25,7 @@ const createItems = (count: number) => {
 	});
 };
 
-const factory = ({
-	onChange
-}: {
-	onChange: Mock
-}) => {
+const factory = ({ onChange }: { onChange: Mock }) => {
 	return new Db<DbRecord>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
 		region: 'us-east-1',
@@ -61,7 +57,7 @@ describe('/index.ts', () => {
 	beforeAll(async () => {
 		onChangeMock = vi.fn();
 		db = factory({ onChange: onChangeMock });
-		
+
 		await db.createTable();
 	});
 
@@ -100,99 +96,80 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('batchWrite / batchDelete / deleteMany', () => {
-		beforeEach(async () => {
-			vi.spyOn(db, 'query');
-			vi.spyOn(db.client, 'send');
-		});
-
+	describe('batchGet / batchWrite / batchDelete', () => {
 		afterAll(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
-		it('should batch write and batch delete', async () => {
-			const wroteItems = await db.batchWrite(createItems(52));
-
+		it('should batch write, batch get and batch delete', async () => {
+			const batchWriteItems = await db.batchWrite(createItems(52));
 			expect(
-				_.every(wroteItems, item => {
+				_.every(batchWriteItems, item => {
 					return _.isNumber(item.__ts);
 				})
 			).toBeTruthy();
 
-			expect(db.client.send).toHaveBeenCalledTimes(3);
-			vi.mocked(db.client.send).mockClear();
+			const batchGetItems = await db.batchGet(batchWriteItems);
+			expect(batchGetItems).toHaveLength(52);
 
-			const deleteItems = await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany(
-					{
-						pk: 'pk-1'
-					},
-					{
-						attributeNames: { '#sk': 'sk' },
-						attributeValues: { ':from': 'sk-0', ':to': 'sk-999' },
-						expression: '#sk BETWEEN :from AND :to'
-					}
+			const batchDeleteItems = await Promise.all([
+				db.batchDelete(
+					_.times(52, i => {
+						return { pk: 'pk-0', sk: `sk-${i}` };
+					})
+				),
+				db.batchDelete(
+					_.times(52, i => {
+						return { pk: 'pk-1', sk: `sk-${i}` };
+					})
 				)
 			]);
-
-			expect(db.client.send).toHaveBeenCalledTimes(6);
-			expect(db.query).toHaveBeenCalledTimes(2);
-			expect(db.query).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0'
-				},
-				{
-					all: true,
-					attributeNames: {},
-					attributeValues: {},
-					expression: '',
-					filterExpression: '',
-					index: '',
-					onChunk: expect.any(Function),
-					prefix: false
-				}
-			);
-			expect(db.query).toHaveBeenCalledWith(
-				{
-					pk: 'pk-1'
-				},
-				{
-					all: true,
-					attributeNames: { '#sk': 'sk' },
-					attributeValues: { ':from': 'sk-0', ':to': 'sk-999' },
-					expression: '#sk BETWEEN :from AND :to',
-					filterExpression: '',
-					index: '',
-					onChunk: expect.any(Function),
-					prefix: false
-				}
-			);
-
-			expect(deleteItems[0]).toHaveLength(26);
-			expect(deleteItems[1]).toHaveLength(26);
+			expect(batchDeleteItems[0]).toHaveLength(52);
+			expect(batchDeleteItems[1]).toHaveLength(52);
 
 			const res = await Promise.all([
 				db.query({
-					pk: 'pk-0'
+					item: { pk: 'pk-0' }
 				}),
 				db.query({
-					pk: 'pk-1'
+					item: { pk: 'pk-1' }
 				})
 			]);
-
-			expect(res[0].items).toHaveLength(0);
-			expect(res[1].items).toHaveLength(0);
+			expect(res[0].count).toEqual(0);
+			expect(res[1].count).toEqual(0);
 			expect(onChangeMock).toHaveBeenCalledTimes(3);
+		});
+	});
+
+	describe('clear', () => {
+		afterAll(async () => {
+			await db.clear();
+		});
+
+		it('should clear', async () => {
+			await db.batchWrite(createItems(10));
+
+			const res1 = await db.scan();
+			expect(res1.count).toEqual(10);
+
+			const { count } = await db.clear();
+			expect(count).toEqual(10);
+
+			const res2 = await db.scan();
+			expect(res2.count).toEqual(0);
+		});
+
+		it('should clear by pk', async () => {
+			await db.batchWrite(createItems(10));
+
+			const res1 = await db.scan();
+			expect(res1.count).toEqual(10);
+
+			const { count } = await db.clear('pk-0');
+			expect(count).toEqual(5);
+
+			const res2 = await db.scan();
+			expect(res2.count).toEqual(5);
 		});
 	});
 
@@ -205,20 +182,14 @@ describe('/index.ts', () => {
 		});
 
 		afterAll(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
 		it('should return null if item not found', async () => {
 			const item = await db.delete({
-				pk: 'pk-0',
-				sk: 'sk-100'
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-100' }
+				}
 			});
 
 			expect(item).toBeNull();
@@ -226,24 +197,14 @@ describe('/index.ts', () => {
 
 		it('should delete', async () => {
 			const item = await db.delete({
-				pk: 'pk-0',
-				sk: 'sk-0'
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
+				}
 			});
 
-			expect(db.get).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: {},
-					attributeValues: {},
-					conditionExpression: '',
-					filterExpression: '',
-					index: '',
-					prefix: false
-				}
-			);
+			expect(db.get).toHaveBeenCalledWith({
+				item: { pk: 'pk-0', sk: 'sk-0' }
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -279,40 +240,34 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
-		it('should delete by prefix', async () => {
-			const item = await db.delete(
-				{
-					pk: 'pk-0',
-					sk: 'sk-'
-				},
-				{
-					prefix: true
+		it('should delete by queryExpression and condition', async () => {
+			const item = await db.delete({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				conditionExpression: '#pk = :pk',
+				filter: {
+					attributeNames: { '#pk': 'pk' },
+					attributeValues: { ':pk': 'pk-0' },
+					queryExpression: '#pk = :pk'
 				}
-			);
+			});
 
-			expect(db.get).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0',
-					sk: 'sk-'
-				},
-				{
-					attributeNames: {},
-					attributeValues: {},
-					conditionExpression: '',
-					filterExpression: '',
-					index: '',
-					prefix: true
-				}
-			);
+			expect(db.get).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				queryExpression: '#pk = :pk'
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
+						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts) AND #pk = :pk',
 						ExpressionAttributeNames: {
+							'#pk': 'pk',
 							'#__ts': '__ts'
 						},
 						ExpressionAttributeValues: {
+							':pk': 'pk-0',
 							':__ts': expect.any(Number)
 						},
 						Key: {
@@ -331,122 +286,145 @@ describe('/index.ts', () => {
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
 					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0'
-				})
-			);
-
-			expect(onChangeMock).toHaveBeenCalledTimes(2);
-		});
-
-		it('should delete by local secondary index', async () => {
-			const item = await db.delete({
-				lsiSk: 'lsi-sk-0',
-				pk: 'pk-0'
-			});
-
-			expect(db.get).toHaveBeenCalledWith(
-				{
-					lsiSk: 'lsi-sk-0',
+					sk: 'sk-0',
 					pk: 'pk-0'
-				},
-				{
-					attributeNames: {},
-					attributeValues: {},
-					conditionExpression: '',
-					filterExpression: '',
-					index: '',
-					prefix: false
-				}
-			);
-
-			expect(db.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
-						ExpressionAttributeNames: {
-							'#__ts': '__ts'
-						},
-						ExpressionAttributeValues: {
-							':__ts': expect.any(Number)
-						},
-						Key: {
-							pk: 'pk-0',
-							sk: 'sk-0'
-						},
-						ReturnValues: 'ALL_OLD',
-						TableName: 'use-dynamodb-spec'
-					})
-				})
-			);
-
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-0',
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0'
 				})
 			);
 
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
+	});
 
-		it('should delete by global secondary index', async () => {
-			const item = await db.delete({
-				gsiPk: 'gsi-pk-0',
-				gsiSk: 'gsi-sk-0'
+	describe('deleteMany', () => {
+		beforeAll(async () => {
+			await db.batchWrite(createItems(52));
+		});
+
+		afterAll(async () => {
+			await db.clear();
+		});
+
+		beforeEach(() => {
+			vi.spyOn(db, 'batchDelete');
+			vi.spyOn(db, 'filter');
+		});
+
+		it('should delete', async () => {
+			const batchDeleteItems = await db.deleteMany({
+				item: { pk: 'pk-0' }
 			});
 
-			expect(db.get).toHaveBeenCalledWith(
-				{
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0'
+			expect(db.filter).toHaveBeenCalledWith({
+				consistentRead: true,
+				item: { pk: 'pk-0' },
+				limit: Infinity,
+				onChunk: expect.any(Function),
+				startKey: null
+			});
+
+			expect(db.batchDelete).toHaveBeenCalledOnce();
+			expect(batchDeleteItems).toHaveLength(26);
+		});
+
+		it('should delete by queryExpression', async () => {
+			const batchDeleteItems = await db.deleteMany({
+				attributeNames: { '#pk': 'pk', '#sk': 'sk' },
+				attributeValues: {
+					':from': 'sk-0',
+					':pk': 'pk-1',
+					':to': 'sk-999'
 				},
-				{
-					attributeNames: {},
-					attributeValues: {},
-					conditionExpression: '',
-					filterExpression: '',
-					index: '',
-					prefix: false
-				}
-			);
+				queryExpression: '#pk = :pk AND #sk BETWEEN :from AND :to'
+			});
 
-			expect(db.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
-						ExpressionAttributeNames: {
-							'#__ts': '__ts'
-						},
-						ExpressionAttributeValues: {
-							':__ts': expect.any(Number)
-						},
-						Key: {
-							pk: 'pk-0',
-							sk: 'sk-0'
-						},
-						ReturnValues: 'ALL_OLD',
-						TableName: 'use-dynamodb-spec'
-					})
-				})
-			);
+			expect(db.filter).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk', '#sk': 'sk' },
+				attributeValues: {
+					':from': 'sk-0',
+					':pk': 'pk-1',
+					':to': 'sk-999'
+				},
+				consistentRead: true,
+				limit: Infinity,
+				onChunk: expect.any(Function),
+				queryExpression: '#pk = :pk AND #sk BETWEEN :from AND :to',
+				startKey: null
+			});
 
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-0',
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0'
-				})
-			);
+			expect(db.batchDelete).toHaveBeenCalledOnce();
+			expect(batchDeleteItems).toHaveLength(26);
+		});
+	});
 
-			expect(onChangeMock).toHaveBeenCalledTimes(2);
+	describe('filter', () => {
+		beforeAll(async () => {
+			await db.batchWrite(createItems(10));
+		});
+
+		afterAll(async () => {
+			await db.clear();
+		});
+
+		beforeEach(() => {
+			vi.spyOn(db, 'query');
+			vi.spyOn(db, 'scan');
+		});
+
+		it('should throw if invalid parameters', async () => {
+			try {
+				await db.filter({});
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect((err as Error).message).toEqual('Must provide either item, queryExpression or filterExpression');
+			}
+		});
+
+		it('should filter by item', async () => {
+			const { count, lastEvaluatedKey } = await db.filter({
+				item: { pk: 'pk-0' }
+			});
+
+			expect(db.query).toHaveBeenCalledWith({
+				item: { pk: 'pk-0' }
+			});
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should filter by query expression', async () => {
+			const { count, lastEvaluatedKey } = await db.filter({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				queryExpression: '#pk = :pk'
+			});
+
+			expect(db.query).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				queryExpression: '#pk = :pk'
+			});
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should filter by scan', async () => {
+			const { count, lastEvaluatedKey } = await db.filter({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				filterExpression: '#pk = :pk'
+			});
+
+			expect(db.scan).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				filterExpression: '#pk = :pk'
+			});
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
 		});
 	});
 
@@ -456,24 +434,16 @@ describe('/index.ts', () => {
 		});
 
 		afterAll(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
 		beforeEach(() => {
-			vi.spyOn(db, 'query');
+			vi.spyOn(db, 'filter');
 		});
 
 		it('should return null if not found', async () => {
 			const item = await db.get({
-				pk: 'pk-0',
-				sk: 'sk-100'
+				item: { pk: 'pk-0', sk: 'sk-100' }
 			});
 
 			expect(item).toBeNull();
@@ -481,26 +451,15 @@ describe('/index.ts', () => {
 
 		it('should get', async () => {
 			const item = await db.get({
-				pk: 'pk-0',
-				sk: 'sk-0'
+				item: { pk: 'pk-0', sk: 'sk-0' }
 			});
 
-			expect(db.query).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: {},
-					attributeValues: {},
-					consistentRead: false,
-					filterExpression: '',
-					index: '',
-					limit: 1,
-					prefix: false,
-					select: []
-				}
-			);
+			expect(db.filter).toHaveBeenCalledWith({
+				item: { pk: 'pk-0', sk: 'sk-0' },
+				limit: 1,
+				onChunk: expect.any(Function),
+				startKey: null
+			});
 
 			expect(item).toEqual(
 				expect.objectContaining({
@@ -514,35 +473,21 @@ describe('/index.ts', () => {
 			);
 		});
 
-		it('should get with options', async () => {
-			const item = await db.get(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: { '#foo': 'foo' },
-					attributeValues: { ':foo': 'foo-0' },
-					filterExpression: '#foo = :foo'
-				}
-			);
+		it('should get by query expression', async () => {
+			const item = await db.get({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				queryExpression: '#pk = :pk'
+			});
 
-			expect(db.query).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: { '#foo': 'foo' },
-					attributeValues: { ':foo': 'foo-0' },
-					consistentRead: false,
-					filterExpression: '#foo = :foo',
-					index: '',
-					limit: 1,
-					prefix: false,
-					select: []
-				}
-			);
+			expect(db.filter).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				limit: 1,
+				onChunk: expect.any(Function),
+				queryExpression: '#pk = :pk',
+				startKey: null
+			});
 
 			expect(item).toEqual(
 				expect.objectContaining({
@@ -557,32 +502,18 @@ describe('/index.ts', () => {
 		});
 
 		it('should get with select', async () => {
-			const item = await db.get(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					select: ['foo', 'gsiPk']
-				}
-			);
+			const item = await db.get({
+				item: { pk: 'pk-0', sk: 'sk-0' },
+				select: ['foo', 'gsiPk']
+			});
 
-			expect(db.query).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: {},
-					attributeValues: {},
-					consistentRead: false,
-					filterExpression: '',
-					index: '',
-					limit: 1,
-					prefix: false,
-					select: ['foo', 'gsiPk']
-				}
-			);
+			expect(db.filter).toHaveBeenCalledWith({
+				item: { pk: 'pk-0', sk: 'sk-0' },
+				limit: 1,
+				onChunk: expect.any(Function),
+				select: ['foo', 'gsiPk'],
+				startKey: null
+			});
 
 			expect(item).toEqual(
 				expect.objectContaining({
@@ -593,67 +524,157 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('optimisticResolveSchema', () => {
-		it('should resolve', () => {
-			const { index, schema } = db.optimisticResolveSchema({
-				pk: 'pk-0',
-				sk: 'sk-0'
-			});
+	describe('getLastEvaluatedKey', () => {
+		it('should returns', () => {
+			// @ts-expect-error
+			const lastEvaluatedKey = db.getLastEvaluatedKey([
+				{
+					gsiPk: 'gsi-pk',
+					gsiSk: 'gsi-sk',
+					lsiSk: 'lsi-sk',
+					pk: 'pk',
+					sk: 'sk'
+				}
+			]);
 
-			expect(index).toEqual('sort');
-			expect(schema).toEqual({
-				partition: 'pk',
-				sort: 'sk'
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk', sk: 'sk' });
+		});
+
+		it('should returns with LSI', () => {
+			// @ts-expect-error
+			const lastEvaluatedKey = db.getLastEvaluatedKey(
+				[
+					{
+						gsiPk: 'gsi-pk',
+						gsiSk: 'gsi-sk',
+						lsiSk: 'lsi-sk',
+						pk: 'pk',
+						sk: 'sk'
+					}
+				],
+				'ls-index'
+			);
+
+			expect(lastEvaluatedKey).toEqual({
+				lsiSk: 'lsi-sk',
+				pk: 'pk',
+				sk: 'sk'
 			});
 		});
 
-		it('should resolve only partition', () => {
-			const { index, schema } = db.optimisticResolveSchema({
-				pk: 'pk-0'
-			});
+		it('should returns with GSI', () => {
+			// @ts-expect-error
+			const lastEvaluatedKey = db.getLastEvaluatedKey(
+				[
+					{
+						gsiPk: 'gsi-pk',
+						gsiSk: 'gsi-sk',
+						lsiSk: 'lsi-sk',
+						pk: 'pk',
+						sk: 'sk'
+					}
+				],
+				'gs-index'
+			);
 
-			expect(index).toEqual('');
-			expect(schema).toEqual({
-				partition: 'pk',
-				sort: ''
-			});
-		});
-
-		it('should resolve by local secondary index', () => {
-			const { index, schema } = db.optimisticResolveSchema({
-				pk: 'pk-0',
-				lsiSk: 'lsi-sk-0'
-			});
-
-			expect(index).toEqual('ls-index');
-			expect(schema).toEqual({
-				partition: 'pk',
-				sort: 'lsiSk'
+			expect(lastEvaluatedKey).toEqual({
+				gsiPk: 'gsi-pk',
+				gsiSk: 'gsi-sk',
+				pk: 'pk',
+				sk: 'sk'
 			});
 		});
 
-		it('should resolve by global secondary index', () => {
-			const { index, schema } = db.optimisticResolveSchema({
-				gsiPk: 'gsi-pk-0',
-				gsiSk: 'gsi-sk-0'
+		it('should returns with inexistent index', () => {
+			// @ts-expect-error
+			const lastEvaluatedKey = db.getLastEvaluatedKey(
+				[
+					{
+						gsiPk: 'gsi-pk',
+						gsiSk: 'gsi-sk',
+						lsiSk: 'lsi-sk',
+						pk: 'pk',
+						sk: 'sk'
+					}
+				],
+				'inexistent-index'
+			);
+
+			expect(lastEvaluatedKey).toEqual({
+				pk: 'pk',
+				sk: 'sk'
+			});
+		});
+	});
+
+	describe('getSchemaKeys', () => {
+		it('should return schema keys', () => {
+			// @ts-expect-error
+			const keys = db.getSchemaKeys({
+				gsiPk: 'gsi-pk',
+				gsiSk: 'gsi-sk',
+				lsiSk: 'lsi-sk',
+				pk: 'pk',
+				sk: 'sk'
 			});
 
-			expect(index).toEqual('gs-index');
-			expect(schema).toEqual({
-				partition: 'gsiPk',
-				sort: 'gsiSk'
+			expect(keys).toEqual({ pk: 'pk', sk: 'sk' });
+		});
+
+		it('should return schema keys with LSI', () => {
+			// @ts-expect-error
+			const keys = db.getSchemaKeys(
+				{
+					gsiPk: 'gsi-pk',
+					gsiSk: 'gsi-sk',
+					lsiSk: 'lsi-sk',
+					pk: 'pk',
+					sk: 'sk'
+				},
+				'ls-index'
+			);
+
+			expect(keys).toEqual({
+				lsiSk: 'lsi-sk',
+				pk: 'pk'
 			});
 		});
 
-		it('should resolve only partition by global secondary index', () => {
-			const { index, schema } = db.optimisticResolveSchema({
-				gsiPk: 'gsi-pk-0'
-			});
+		it('should return schema keys with GSI', () => {
+			// @ts-expect-error
+			const keys = db.getSchemaKeys(
+				{
+					gsiPk: 'gsi-pk',
+					gsiSk: 'gsi-sk',
+					lsiSk: 'lsi-sk',
+					pk: 'pk',
+					sk: 'sk'
+				},
+				'gs-index'
+			);
 
-			expect(index).toEqual('gs-index');
-			expect(schema).toEqual({
-				partition: 'gsiPk',
-				sort: ''
+			expect(keys).toEqual({
+				gsiPk: 'gsi-pk',
+				gsiSk: 'gsi-sk'
+			});
+		});
+
+		it('should return schema keys with inexistent index', () => {
+			// @ts-expect-error
+			const keys = db.getSchemaKeys(
+				{
+					gsiPk: 'gsi-pk',
+					gsiSk: 'gsi-sk',
+					lsiSk: 'lsi-sk',
+					pk: 'pk',
+					sk: 'sk'
+				},
+				'inexistent-index'
+			);
+
+			expect(keys).toEqual({
+				pk: 'pk',
+				sk: 'sk'
 			});
 		});
 	});
@@ -664,14 +685,7 @@ describe('/index.ts', () => {
 		});
 
 		afterAll(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
 		it('should put', async () => {
@@ -683,7 +697,7 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#__pk))',
+						ConditionExpression: 'attribute_not_exists(#__pk)',
 						ExpressionAttributeNames: { '#__pk': 'pk' },
 						Item: {
 							__createdAt: expect.any(String),
@@ -723,8 +737,7 @@ describe('/index.ts', () => {
 
 		it('should put ovewriting', async () => {
 			const item = await db.get({
-				pk: 'pk-0',
-				sk: 'sk-0'
+				item: { pk: 'pk-0', sk: 'sk-0' }
 			});
 
 			const overwriteItem = await db.put(
@@ -782,7 +795,7 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#__pk)) AND #foo <> :foo',
+						ConditionExpression: 'attribute_not_exists(#__pk) AND #foo <> :foo',
 						ExpressionAttributeNames: { '#foo': 'foo', '#__pk': 'pk' },
 						ExpressionAttributeValues: { ':foo': 'foo-0' },
 						Item: {
@@ -815,23 +828,26 @@ describe('/index.ts', () => {
 		});
 
 		afterAll(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
 		beforeEach(() => {
 			vi.spyOn(db.client, 'send');
 		});
 
-		it('should query with partition', async () => {
+		it('should throw if invalid parameters', async () => {
+			try {
+				await db.query({});
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect((err as Error).message).toEqual('Must provide either item or queryExpression');
+			}
+		});
+
+		it('should query by item with partition', async () => {
 			const { count, lastEvaluatedKey } = await db.query({
-				pk: 'pk-0'
+				item: { pk: 'pk-0' }
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
@@ -854,10 +870,9 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by partition/sort', async () => {
+		it('should query by item with partition/sort', async () => {
 			const { count, lastEvaluatedKey } = await db.query({
-				pk: 'pk-0',
-				sk: 'sk-0'
+				item: { pk: 'pk-0', sk: 'sk-0' }
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
@@ -882,16 +897,11 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by partition/sort with prefix', async () => {
-			const { count, lastEvaluatedKey } = await db.query(
-				{
-					pk: 'pk-0',
-					sk: 'sk-'
-				},
-				{
-					prefix: true
-				}
-			);
+		it('should query by item with partition/sort with prefix', async () => {
+			const { count, lastEvaluatedKey } = await db.query({
+				item: { pk: 'pk-0', sk: 'sk-' },
+				prefix: true
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -915,10 +925,9 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by local secondary index', async () => {
+		it('should query by item with LSI', async () => {
 			const { count, lastEvaluatedKey } = await db.query({
-				pk: 'pk-0',
-				lsiSk: 'lsi-sk-0'
+				item: { pk: 'pk-0', lsiSk: 'lsi-sk-0' }
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
@@ -944,10 +953,9 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by global secondary index', async () => {
+		it('should query by item with GSI', async () => {
 			const { count, lastEvaluatedKey } = await db.query({
-				gsiPk: 'gsi-pk-0',
-				gsiSk: 'gsi-sk-0'
+				item: { gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-0' }
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
@@ -973,9 +981,9 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by global secondary index with partition', async () => {
+		it('should query by item with GSI with partition', async () => {
 			const { count, lastEvaluatedKey } = await db.query({
-				gsiPk: 'gsi-pk-0'
+				item: { gsiPk: 'gsi-pk-0' }
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
@@ -999,18 +1007,14 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by custom expression', async () => {
-			const { count, lastEvaluatedKey } = await db.query(
-				{
-					pk: 'pk-0'
-				},
-				{
-					attributeNames: { '#lsiSk': 'lsiSk' },
-					attributeValues: { ':from': 'lsi-sk-0', ':to': 'lsi-sk-3' },
-					index: 'ls-index',
-					expression: ' #lsiSk BETWEEN :from AND :to'
-				}
-			);
+		it('should query by item + query expression', async () => {
+			const { count, lastEvaluatedKey } = await db.query({
+				attributeNames: { '#lsiSk': 'lsiSk' },
+				attributeValues: { ':from': 'lsi-sk-0', ':to': 'lsi-sk-3' },
+				index: 'ls-index',
+				item: { pk: 'pk-0' },
+				queryExpression: ' #lsiSk BETWEEN :from AND :to'
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1036,17 +1040,13 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query by filterExpression', async () => {
-			const { count, lastEvaluatedKey } = await db.query(
-				{
-					pk: 'pk-0'
-				},
-				{
-					attributeNames: { '#foo': 'foo' },
-					attributeValues: { ':foo': 'foo-0' },
-					filterExpression: '#foo = :foo'
-				}
-			);
+		it('should query by item with filterExpression', async () => {
+			const { count, lastEvaluatedKey } = await db.query({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo = :foo',
+				item: { pk: 'pk-0' }
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1071,15 +1071,11 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toBeNull();
 		});
 
-		it('should query with limit/startKey', async () => {
-			const { count, lastEvaluatedKey } = await db.query(
-				{
-					pk: 'pk-0'
-				},
-				{
-					limit: 1
-				}
-			);
+		it('should query by item with limit/startKey', async () => {
+			const { count, lastEvaluatedKey } = await db.query({
+				item: { pk: 'pk-0' },
+				limit: 1
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1101,14 +1097,10 @@ describe('/index.ts', () => {
 			expect(count).toEqual(1);
 			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-0' });
 
-			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await db.query(
-				{
-					pk: 'pk-0'
-				},
-				{
-					startKey: lastEvaluatedKey
-				}
-			);
+			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await db.query({
+				item: { pk: 'pk-0' },
+				startKey: lastEvaluatedKey
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1131,21 +1123,51 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey2).toBeNull();
 		});
 
-		it('should query all with limit/startKey and onChunk', async () => {
+		it('should query by item until limit with onChunk', async () => {
 			const onChunk = vi.fn();
-			const { count, lastEvaluatedKey } = await db.query(
-				{
-					pk: 'pk-0'
-				},
-				{
-					all: true,
-					onChunk,
-					limit: 2
-				}
+			const { count, lastEvaluatedKey } = await db.query({
+				chunkLimit: 1,
+				item: { pk: 'pk-0' },
+				limit: 2,
+				onChunk
+			});
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						Limit: 1,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExclusiveStartKey: { pk: 'pk-0', sk: 'sk-0' },
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						Limit: 2,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
 			);
 
-			expect(db.client.send).toHaveBeenCalledTimes(3);
-			expect(onChunk).toHaveBeenCalledTimes(3);
+			expect(onChunk).toHaveBeenCalledTimes(2);
 			expect(onChunk).toHaveBeenCalledWith({
 				count: 2,
 				items: expect.any(Array)
@@ -1155,19 +1177,165 @@ describe('/index.ts', () => {
 				items: expect.any(Array)
 			});
 
-			expect(count).toEqual(5);
-			expect(lastEvaluatedKey).toBeNull();
+			expect(count).toEqual(2);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-2' });
 		});
 
-		it('should query consistent', async () => {
-			const { count } = await db.query(
-				{
-					pk: 'pk-0'
+		it('should query by item until limit with LSI and onChunk', async () => {
+			const onChunk = vi.fn();
+			const { count, lastEvaluatedKey } = await db.query({
+				chunkLimit: 1,
+				item: {
+					pk: 'pk-0',
+					lsiSk: 'lsi-sk-'
 				},
-				{
-					consistentRead: true
-				}
+				limit: 2,
+				prefix: true,
+				onChunk
+			});
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#__sk': 'lsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':__sk': 'lsi-sk-'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
+						Limit: 1,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
 			);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExclusiveStartKey: {
+							lsiSk: 'lsi-sk-0',
+							pk: 'pk-0',
+							sk: 'sk-0'
+						},
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#__sk': 'lsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':__sk': 'lsi-sk-'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
+						Limit: 2,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(onChunk).toHaveBeenCalledTimes(2);
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 2,
+				items: expect.any(Array)
+			});
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 1,
+				items: expect.any(Array)
+			});
+
+			expect(count).toEqual(2);
+			expect(lastEvaluatedKey).toEqual({
+				lsiSk: 'lsi-sk-2',
+				pk: 'pk-0',
+				sk: 'sk-2'
+			});
+		});
+
+		it('should query by item until limit with GSI and onChunk', async () => {
+			const onChunk = vi.fn();
+			const { count, lastEvaluatedKey } = await db.query({
+				chunkLimit: 1,
+				item: {
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-'
+				},
+				limit: 2,
+				prefix: true,
+				onChunk
+			});
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'gsiPk',
+							'#__sk': 'gsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'gsi-pk-0',
+							':__sk': 'gsi-sk-'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
+						Limit: 1,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExclusiveStartKey: {
+							gsiPk: 'gsi-pk-0',
+							gsiSk: 'gsi-sk-0',
+							pk: 'pk-0',
+							sk: 'sk-0'
+						},
+						ExpressionAttributeNames: {
+							'#__pk': 'gsiPk',
+							'#__sk': 'gsiSk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'gsi-pk-0',
+							':__sk': 'gsi-sk-'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND begins_with(#__sk, :__sk)',
+						Limit: 2,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(onChunk).toHaveBeenCalledTimes(2);
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 2,
+				items: expect.any(Array)
+			});
+			expect(onChunk).toHaveBeenCalledWith({
+				count: 1,
+				items: expect.any(Array)
+			});
+
+			expect(count).toEqual(2);
+			expect(lastEvaluatedKey).toEqual({
+				gsiPk: 'gsi-pk-0',
+				gsiSk: 'gsi-sk-2',
+				pk: 'pk-0',
+				sk: 'sk-2'
+			});
+		});
+
+		it('should by item query with consistentRead', async () => {
+			const { count } = await db.query({
+				item: { pk: 'pk-0' },
+				consistentRead: true
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1188,15 +1356,11 @@ describe('/index.ts', () => {
 			expect(count).toEqual(5);
 		});
 
-		it('should query with select', async () => {
-			const { count, items } = await db.query(
-				{
-					pk: 'pk-0'
-				},
-				{
-					select: ['foo', 'gsiPk']
-				}
-			);
+		it('should query by item with select', async () => {
+			const { count, items } = await db.query({
+				item: { pk: 'pk-0' },
+				select: ['foo', 'gsiPk']
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1224,6 +1388,253 @@ describe('/index.ts', () => {
 				})
 			);
 		});
+
+		it('should query by expression', async () => {
+			const { count, lastEvaluatedKey } = await db.query({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-0' },
+				queryExpression: '#pk = :pk'
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: { '#pk': 'pk' },
+						ExpressionAttributeValues: { ':pk': 'pk-0' },
+						KeyConditionExpression: '#pk = :pk',
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+	});
+
+	describe('replace', () => {
+		afterEach(async () => {
+			await db.clear();
+		});
+
+		beforeEach(() => {
+			vi.spyOn(db, 'transaction');
+		});
+
+		it('should replace', async () => {
+			const replacedItem = await db.put({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			onChangeMock.mockClear();
+			const newItem = await db.replace(
+				{
+					pk: 'pk-1',
+					sk: 'sk-1'
+				},
+				replacedItem
+			);
+
+			expect(db.transaction).toHaveBeenCalledWith({
+				TransactItems: [
+					{
+						Delete: expect.objectContaining({
+							ConditionExpression: '#__ts = :__ts',
+							ExpressionAttributeNames: { '#__ts': '__ts' },
+							ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+							TableName: 'use-dynamodb-spec'
+						})
+					},
+					{
+						Put: expect.objectContaining({
+							ConditionExpression: 'attribute_not_exists(#__pk)',
+							ExpressionAttributeNames: { '#__pk': 'pk' },
+							TableName: 'use-dynamodb-spec'
+						})
+					}
+				]
+			});
+
+			expect(newItem).toEqual({
+				pk: 'pk-1',
+				sk: 'sk-1',
+				__createdAt: replacedItem.__createdAt,
+				__ts: newItem.__ts,
+				__updatedAt: newItem.__updatedAt
+			});
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		it('should replace ovewriting', async () => {
+			await db.put({
+				pk: 'pk-1',
+				sk: 'sk-1'
+			});
+
+			const replacedItem = await db.put({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			onChangeMock.mockClear();
+			const newItem = await db.replace(
+				{
+					pk: 'pk-1',
+					sk: 'sk-1'
+				},
+				replacedItem,
+				{ overwrite: true }
+			);
+
+			expect(db.transaction).toHaveBeenCalledWith({
+				TransactItems: [
+					{
+						Delete: expect.objectContaining({
+							ConditionExpression: '#__ts = :__ts',
+							ExpressionAttributeNames: { '#__ts': '__ts' },
+							ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+							TableName: 'use-dynamodb-spec'
+						})
+					},
+					{
+						Put: expect.objectContaining({
+							TableName: 'use-dynamodb-spec'
+						})
+					}
+				]
+			});
+
+			expect(newItem).toEqual({
+				pk: 'pk-1',
+				sk: 'sk-1',
+				__createdAt: replacedItem.__createdAt,
+				__ts: newItem.__ts,
+				__updatedAt: newItem.__updatedAt
+			});
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		it('should throw on overwrite', async () => {
+			await db.put({
+				pk: 'pk-1',
+				sk: 'sk-1'
+			});
+
+			const replacedItem = await db.put({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			try {
+				onChangeMock.mockClear();
+				await db.replace(
+					{
+						pk: 'pk-1',
+						sk: 'sk-1'
+					},
+					replacedItem
+				);
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect(db.transaction).toHaveBeenCalledWith({
+					TransactItems: [
+						{
+							Delete: expect.objectContaining({
+								ConditionExpression: '#__ts = :__ts',
+								ExpressionAttributeNames: { '#__ts': '__ts' },
+								ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+								TableName: 'use-dynamodb-spec'
+							})
+						},
+						{
+							Put: expect.objectContaining({
+								ConditionExpression: 'attribute_not_exists(#__pk)',
+								ExpressionAttributeNames: { '#__pk': 'pk' },
+								TableName: 'use-dynamodb-spec'
+							})
+						}
+					]
+				});
+
+				expect(onChangeMock).not.toHaveBeenCalled();
+				expect((err as Error).name).toEqual('TransactionCanceledException');
+			}
+		});
+	});
+
+	describe('resolveSchema', () => {
+		it('should resolve', () => {
+			// @ts-expect-error
+			const { index, schema } = db.resolveSchema({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			expect(index).toEqual('sort');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: 'sk'
+			});
+		});
+
+		it('should resolve only partition', () => {
+			// @ts-expect-error
+			const { index, schema } = db.resolveSchema({
+				pk: 'pk-0'
+			});
+
+			expect(index).toEqual('');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: ''
+			});
+		});
+
+		it('should resolve by LSI', () => {
+			// @ts-expect-error
+			const { index, schema } = db.resolveSchema({
+				pk: 'pk-0',
+				lsiSk: 'lsi-sk-0'
+			});
+
+			expect(index).toEqual('ls-index');
+			expect(schema).toEqual({
+				partition: 'pk',
+				sort: 'lsiSk'
+			});
+		});
+
+		it('should resolve by GSI', () => {
+			// @ts-expect-error
+			const { index, schema } = db.resolveSchema({
+				gsiPk: 'gsi-pk-0',
+				gsiSk: 'gsi-sk-0'
+			});
+
+			expect(index).toEqual('gs-index');
+			expect(schema).toEqual({
+				partition: 'gsiPk',
+				sort: 'gsiSk'
+			});
+		});
+
+		it('should resolve only partition by GSI', () => {
+			// @ts-expect-error
+			const { index, schema } = db.resolveSchema({
+				gsiPk: 'gsi-pk-0'
+			});
+
+			expect(index).toEqual('gs-index');
+			expect(schema).toEqual({
+				partition: 'gsiPk',
+				sort: ''
+			});
+		});
 	});
 
 	describe('scan', () => {
@@ -1232,25 +1643,22 @@ describe('/index.ts', () => {
 		});
 
 		afterAll(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
 		beforeEach(() => {
 			vi.spyOn(db.client, 'send');
 		});
 
-		it('should scan with limit/startKey', async () => {
-			const { count, lastEvaluatedKey } = await db.scan({
-				limit: 1
+		it('should scan until limit with onChunk', async () => {
+			const onChunk = vi.fn();
+			const { items, count, lastEvaluatedKey } = await db.scan({
+				chunkLimit: 1,
+				limit: 2,
+				onChunk
 			});
 
+			expect(db.client.send).toHaveBeenCalledTimes(2);
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
@@ -1260,14 +1668,26 @@ describe('/index.ts', () => {
 					})
 				})
 			);
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExclusiveStartKey: { pk: 'pk-1', sk: 'sk-1' },
+						Limit: 2,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
 
-			expect(count).toEqual(1);
-			expect(lastEvaluatedKey).not.toBeNull();
+			expect(count).toEqual(2);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-1', sk: 'sk-3' });
 
+			vi.mocked(db.client.send).mockClear();
 			const { count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await db.scan({
 				startKey: lastEvaluatedKey
 			});
 
+			expect(db.client.send).toHaveBeenCalledOnce();
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
@@ -1278,31 +1698,8 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(count2).toEqual(9);
+			expect(count2).toEqual(8);
 			expect(lastEvaluatedKey2).toBeNull();
-		});
-
-		it('should scan all with limit/startKey and onChunk', async () => {
-			const onChunk = vi.fn();
-			const { count, lastEvaluatedKey } = await db.scan({
-				all: true,
-				onChunk,
-				limit: 2
-			});
-
-			expect(db.client.send).toHaveBeenCalledTimes(6);
-			expect(onChunk).toHaveBeenCalledTimes(6);
-			expect(onChunk).toHaveBeenCalledWith({
-				count: 2,
-				items: expect.any(Array)
-			});
-			expect(onChunk).toHaveBeenCalledWith({
-				count: 2,
-				items: expect.any(Array)
-			});
-
-			expect(count).toEqual(10);
-			expect(lastEvaluatedKey).toBeNull();
 		});
 
 		it('should scan with select', async () => {
@@ -1335,32 +1732,22 @@ describe('/index.ts', () => {
 		});
 
 		afterEach(async () => {
-			await Promise.all([
-				db.deleteMany({
-					pk: 'pk-0'
-				}),
-				db.deleteMany({
-					pk: 'pk-1'
-				})
-			]);
+			await db.clear();
 		});
 
 		it('should throw if item not found', async () => {
 			try {
-				await db.update(
-					{
-						pk: 'pk-0',
-						sk: 'sk-1'
+				await db.update({
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-1' }
 					},
-					{
-						updateFn: item => {
-							return {
-								...item,
-								foo: 'foo-1'
-							};
-						}
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
 					}
-				);
+				});
 
 				throw new Error('expected to throw');
 			} catch (err) {
@@ -1371,20 +1758,17 @@ describe('/index.ts', () => {
 		it('should update', async () => {
 			await db.batchWrite(createItems(1));
 
-			const item = await db.update(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
+			const item = await db.update({
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
 				},
-				{
-					updateFn: item => {
-						return {
-							...item,
-							foo: 'foo-1'
-						};
-					}
+				updateFunction: item => {
+					return {
+						...item,
+						foo: 'foo-1'
+					};
 				}
-			);
+			});
 
 			expect(db.put).toHaveBeenCalledWith(
 				{
@@ -1428,43 +1812,37 @@ describe('/index.ts', () => {
 			await db.batchWrite(createItems(1));
 
 			try {
-				await db.update(
-					{
-						pk: 'pk-0',
-						sk: 'sk-0'
+				await db.update({
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
 					},
-					{
-						updateFn: item => {
-							return {
-								...item,
-								pk: 'pk-1',
-								sk: 'sk-1',
-								foo: 'foo-1'
-							};
-						}
+					updateFunction: item => {
+						return {
+							...item,
+							pk: 'pk-1',
+							sk: 'sk-1',
+							foo: 'foo-1'
+						};
 					}
-				);
+				});
 			} catch (err) {
 				expect(err.name).toContain('ConditionalCheckFailedException');
 			}
 		});
 
 		it('should upsert', async () => {
-			const item = await db.update(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
+			const item = await db.update({
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
 				},
-				{
-					updateFn: item => {
-						return {
-							...item,
-							foo: 'foo-1'
-						};
-					},
-					upsert: true
-				}
-			);
+				updateFunction: item => {
+					return {
+						...item,
+						foo: 'foo-1'
+					};
+				},
+				upsert: true
+			});
 
 			expect(db.put).toHaveBeenCalledWith(
 				{
@@ -1495,23 +1873,14 @@ describe('/index.ts', () => {
 		it('should update with expression', async () => {
 			await db.batchWrite(createItems(1));
 
-			const item = await db.update(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
+			const item = await db.update({
+				attributeNames: { '#foo': 'foo', '#bar': 'bar' },
+				attributeValues: { ':foo': 'foo-1', ':one': 1 },
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
 				},
-				{
-					attributeNames: {
-						'#foo': 'foo',
-						'#bar': 'bar'
-					},
-					attributeValues: {
-						':foo': 'foo-1',
-						':one': 1
-					},
-					expression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one'
-				}
-			);
+				updateExpression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one'
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1562,24 +1931,15 @@ describe('/index.ts', () => {
 		});
 
 		it('should upsert with expression', async () => {
-			const item = await db.update(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
+			const item = await db.update({
+				attributeNames: { '#foo': 'foo', '#bar': 'bar' },
+				attributeValues: { ':foo': 'foo-1', ':one': 1 },
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
 				},
-				{
-					attributeNames: {
-						'#foo': 'foo',
-						'#bar': 'bar'
-					},
-					attributeValues: {
-						':foo': 'foo-1',
-						':one': 1
-					},
-					expression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one',
-					upsert: true
-				}
-			);
+				updateExpression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one',
+				upsert: true
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1628,21 +1988,18 @@ describe('/index.ts', () => {
 		it('should update partition key with transaction', async () => {
 			await db.batchWrite(createItems(1));
 
-			const item = await db.update(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
+			const item = await db.update({
+				allowUpdatePartitionAndSort: true,
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
 				},
-				{
-					allowUpdatePartitionAndSort: true,
-					updateFn: item => {
-						return {
-							...item,
-							pk: 'pk-1'
-						};
-					}
+				updateFunction: item => {
+					return {
+						...item,
+						pk: 'pk-1'
+					};
 				}
-			);
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1685,21 +2042,18 @@ describe('/index.ts', () => {
 		it('should update sort key with transaction', async () => {
 			await db.batchWrite(createItems(1));
 
-			const item = await db.update(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
+			const item = await db.update({
+				allowUpdatePartitionAndSort: true,
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
 				},
-				{
-					allowUpdatePartitionAndSort: true,
-					updateFn: item => {
-						return {
-							...item,
-							sk: 'sk-1'
-						};
-					}
+				updateFunction: item => {
+					return {
+						...item,
+						sk: 'sk-1'
+					};
 				}
-			);
+			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({

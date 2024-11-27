@@ -1,16 +1,20 @@
 import _ from 'lodash';
 import {
+	BatchGetCommand,
 	BatchWriteCommand,
 	DeleteCommand,
+	DeleteCommandInput,
 	DynamoDBDocumentClient,
 	PutCommand,
 	PutCommandInput,
 	QueryCommand,
 	QueryCommandInput,
-	ScanCommandInput,
 	ScanCommand,
-	UpdateCommand,
-	TransactWriteCommand
+	ScanCommandInput,
+	TransactWriteCommand,
+	TransactWriteCommandInput,
+	TransactWriteCommandOutput,
+	UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import {
 	AttributeDefinition,
@@ -24,23 +28,23 @@ import {
 	LocalSecondaryIndex
 } from '@aws-sdk/client-dynamodb';
 
-type ItemRaw = Record<string, any>;
-type ItemPersisted<T extends ItemRaw = ItemRaw> = T & {
+type Dict = Record<string, any>;
+type PersistedItem<T extends Dict = Dict> = T & {
 	__createdAt: string;
 	__ts: number;
 	__updatedAt: string;
 };
 
 type ChangeType = 'PUT' | 'UPDATE' | 'DELETE';
-type ChangeEvent<T extends ItemRaw = ItemRaw> = {
-	item: ItemPersisted<T>;
+type ChangeEvent<T extends Dict = Dict> = {
+	item: PersistedItem<T>;
 	partition: string;
 	sort?: string | null;
 	table: string;
 	type: ChangeType;
 };
 
-type OnChange<T extends ItemRaw = ItemRaw> = (events: ChangeEvent<T>[]) => Promise<void>;
+type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void>;
 type TableSchema = { partition: string; sort?: string };
 type TableIndex = { name: string; partition: string; sort?: string; type: 'S' | 'N' };
 
@@ -54,145 +58,26 @@ type ConstructorOptions = {
 	table: string;
 };
 
-type SharedOptions = {
+type FilterOptions<T extends Dict = Dict> = {
 	attributeNames?: Record<string, string>;
 	attributeValues?: Record<string, string | number>;
+	chunkLimit?: number;
+	consistentRead?: boolean;
 	filterExpression?: string;
 	index?: string;
+	item?: Dict;
+	limit?: number;
+	onChunk?: ({ count, items }: { count: number; items: PersistedItem<T>[] }) => Promise<void> | void;
 	prefix?: boolean;
+	queryExpression?: string;
 	select?: string[];
+	startKey?: Dict | null;
 };
 
-type DeleteOptions = SharedOptions & {
-	conditionExpression?: string;
-};
-
-type DeleteManyOptions = SharedOptions & {
-	expression?: string;
-};
-
-type GetOptions = SharedOptions & {
-	consistentRead?: boolean;
-};
-
-type QueryOptions<T extends ItemRaw = ItemRaw> = SharedOptions & {
-	all?: boolean;
-	expression?: string;
-	consistentRead?: boolean;
-	onChunk?: ({ count, items }: { count: number; items: ItemPersisted<T>[] }) => Promise<void> | void;
-	limit?: number;
-	startKey?: Record<string, string> | null;
-};
-
-type PutOptions = SharedOptions & {
-	conditionExpression?: string;
-	overwrite: boolean;
-};
-
-type ScanOptions<T extends ItemRaw = ItemRaw> = {
-	all?: boolean;
-	attributeNames?: Record<string, string>;
-	attributeValues?: Record<string, string | number>;
-	consistentRead?: boolean;
-	filterExpression?: string;
-	index?: string;
-	limit?: number;
-	onChunk?: ({ count, items }: { count: number; items: ItemPersisted<T>[] }) => Promise<void> | void;
-	select?: string[];
-	startKey?: Record<string, string> | null;
-};
-
-type UpdateOptions<T extends ItemRaw = ItemRaw> = SharedOptions & {
-	allowUpdatePartitionAndSort?: boolean;
-	conditionExpression?: string;
-	expression?: string;
-	updateFn?: (item: ItemPersisted<T> | ItemRaw) => ItemRaw | null;
-	upsert?: boolean;
-};
-
-const DEFAULT_DELETE_OPTIONS: DeleteOptions = {
-	attributeNames: {},
-	attributeValues: {},
-	conditionExpression: '',
-	filterExpression: '',
-	index: '',
-	prefix: false
-};
-
-const DEFAULT_DELETE_MANY_OPTIONS: DeleteManyOptions = {
-	attributeNames: {},
-	attributeValues: {},
-	expression: '',
-	filterExpression: '',
-	index: '',
-	prefix: false
-};
-
-const DEFAULT_QUERY_OPTIONS: QueryOptions = {
-	all: false,
-	attributeNames: {},
-	attributeValues: {},
-	consistentRead: false,
-	expression: '',
-	filterExpression: '',
-	index: '',
-	limit: Infinity,
-	onChunk: () => {},
-	prefix: false,
-	startKey: null,
-	select: []
-};
-
-const DEFAULT_GET_OPTIONS: GetOptions = {
-	attributeNames: {},
-	attributeValues: {},
-	consistentRead: false,
-	filterExpression: '',
-	index: '',
-	prefix: false,
-	select: []
-};
-
-const DEFAULT_PUT_OPTIONS: PutOptions = {
-	attributeNames: {},
-	attributeValues: {},
-	conditionExpression: '',
-	overwrite: false
-};
-
-const DEFAULT_SCAN_OPTIONS: ScanOptions = {
-	all: false,
-	attributeNames: {},
-	attributeValues: {},
-	consistentRead: false,
-	filterExpression: '',
-	index: '',
-	limit: Infinity,
-	onChunk: () => {},
-	select: [],
-	startKey: null
-};
-
-const DEFAULT_UPDATE_OPTIONS: UpdateOptions = {
-	allowUpdatePartitionAndSort: false,
-	attributeNames: {},
-	attributeValues: {},
-	conditionExpression: '',
-	expression: '',
-	filterExpression: '',
-	index: '',
-	prefix: false,
-	updateFn: _.identity,
-	upsert: false
-};
-
-const CONSTRUCTOR_OPTIONS: ConstructorOptions = {
-	accessKeyId: '',
-	indexes: [],
-	region: '',
-	schema: { partition: 'namespace', sort: 'id' },
-	secretAccessKey: '',
-	table: ''
+type MultiResponse<T extends Dict = Dict> = {
+	count: number;
+	items: PersistedItem<T>[];
+	lastEvaluatedKey: Dict | null;
 };
 
 const concatConditionExpression = (exp1: string, exp2: string): string => {
@@ -266,7 +151,7 @@ const concatUpdateExpression = (exp1: string, exp2: string): string => {
 	return result;
 };
 
-class Dynamodb<T extends ItemRaw = ItemRaw> {
+class Dynamodb<T extends Dict = Dict> {
 	public client: DynamoDBDocumentClient;
 	public schema: TableSchema;
 
@@ -274,9 +159,7 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 	private onChange: OnChange | null;
 	private table: string;
 
-	constructor(options = CONSTRUCTOR_OPTIONS) {
-		options = _.defaults({}, options, CONSTRUCTOR_OPTIONS);
-
+	constructor(options: ConstructorOptions) {
 		this.client = DynamoDBDocumentClient.from(
 			new DynamoDBClient({
 				credentials: {
@@ -287,8 +170,8 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 			})
 		);
 
-		this.onChange = null;
 		this.indexes = options.indexes || [];
+		this.onChange = null;
 		this.schema = options.schema;
 		this.table = options.table;
 
@@ -297,7 +180,68 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 		}
 	}
 
-	async batchWrite(items: ItemRaw[], ts = _.now()): Promise<ItemPersisted<T>[]> {
+	async batchDelete(keys: Dict[]): Promise<Dict[]> {
+		keys = _.map(keys, this.getSchemaKeys.bind(this));
+
+		const chunks = _.chunk(keys, 25);
+
+		for (const chunk of chunks) {
+			const r = await this.client.send(
+				new BatchWriteCommand({
+					RequestItems: {
+						[this.table]: _.map(chunk, key => {
+							return {
+								DeleteRequest: { Key: key }
+							};
+						})
+					}
+				})
+			);
+		}
+
+		if (_.size(keys)) {
+			await this.notifyChanges(
+				_.map(keys, key => {
+					return {
+						item: key,
+						partition: key[this.schema.partition],
+						sort: this.schema.sort ? key[this.schema.sort] : null,
+						table: this.table,
+						type: 'DELETE'
+					} as ChangeEvent<T>;
+				})
+			);
+		}
+
+		return keys;
+	}
+
+	async batchGet(keys: Dict[]): Promise<PersistedItem<T>[]> {
+		keys = _.map(keys, this.getSchemaKeys.bind(this));
+
+		let chunks = _.chunk(keys, 100);
+		let items: PersistedItem<T>[] = [];
+
+		for (const chunk of chunks) {
+			const res = await this.client.send(
+				new BatchGetCommand({
+					RequestItems: {
+						[this.table]: {
+							Keys: chunk
+						}
+					}
+				})
+			);
+
+			if (res.Responses) {
+				items = [...items, ...(res.Responses[this.table] as PersistedItem<T>[])];
+			}
+		}
+
+		return items;
+	}
+
+	async batchWrite(items: Dict[], ts: number = _.now()): Promise<PersistedItem<T>[]> {
 		const nowISO = new Date().toISOString();
 		const persistedItems = _.map(items, item => {
 			return {
@@ -306,7 +250,7 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 				__ts: ts,
 				__updatedAt: nowISO
 			};
-		}) as ItemPersisted<T>[];
+		}) as PersistedItem<T>[];
 
 		const chunks = _.chunk(persistedItems, 25);
 
@@ -341,45 +285,38 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 		return persistedItems;
 	}
 
-	async batchDelete(items: ItemRaw[]): Promise<ItemRaw[]> {
-		const chunkItems = _.map(items, item => {
-			return _.pick(item, _.compact([this.schema.partition, this.schema.sort]));
-		});
+	async clear(pk?: string) {
+		if (pk) {
+			const { count } = await this.query({
+				item: { [this.schema.partition]: pk },
+				limit: Infinity,
+				onChunk: async ({ items }) => {
+					await this.batchDelete(items);
+				}
+			});
 
-		const chunks = _.chunk(chunkItems, 25);
-
-		for (const chunk of chunks) {
-			await this.client.send(
-				new BatchWriteCommand({
-					RequestItems: {
-						[this.table]: _.map(chunk, item => {
-							return {
-								DeleteRequest: {
-									Key: this.schema.sort
-										? {
-												[this.schema.partition]: item[this.schema.partition],
-												[this.schema.sort]: item[this.schema.sort]
-											}
-										: {
-												[this.schema.partition]: item[this.schema.partition]
-											}
-								}
-							};
-						})
-					}
-				})
-			);
+			return { count };
 		}
 
-		return items;
+		const { count } = await this.scan({
+			limit: Infinity,
+			onChunk: async ({ items }) => {
+				await this.batchDelete(items);
+			}
+		});
+
+		return { count };
 	}
 
-	async delete(item: ItemRaw, options?: DeleteOptions): Promise<ItemPersisted<T> | null> {
-		options = _.defaults({}, options, DEFAULT_DELETE_OPTIONS);
+	async delete(options: {
+		attributeNames?: Record<string, string>;
+		attributeValues?: Record<string, string | number>;
+		conditionExpression?: string;
+		filter: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
+	}): Promise<PersistedItem<T> | null> {
+		const currentItem = await this.get(options.filter);
 
-		const current = await this.get(item, options);
-
-		if (!current) {
+		if (!currentItem) {
 			return null;
 		}
 
@@ -393,89 +330,115 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 			new DeleteCommand({
 				ConditionExpression: conditionExpression,
 				ExpressionAttributeNames: { ...options.attributeNames, '#__ts': '__ts' },
-				ExpressionAttributeValues: { ...options.attributeValues, ':__ts': current.__ts },
-				Key: this.schema.sort
-					? {
-							[this.schema.partition]: current[this.schema.partition],
-							[this.schema.sort]: current[this.schema.sort]
-						}
-					: {
-							[this.schema.partition]: current[this.schema.partition]
-						},
+				ExpressionAttributeValues: { ...options.attributeValues, ':__ts': currentItem.__ts },
+				Key: this.getSchemaKeys(currentItem),
 				ReturnValues: 'ALL_OLD',
 				TableName: this.table
 			})
 		);
 
-		const deletedItem = res.Attributes as ItemPersisted<T>;
+		const deletedItem = (res.Attributes as PersistedItem<T>) || null;
 
-		await this.notifyChanges([
-			{
-				item: deletedItem,
-				partition: current[this.schema.partition],
-				sort: this.schema.sort ? current[this.schema.sort] : null,
-				table: this.table,
-				type: 'DELETE'
-			}
-		]);
+		if (deletedItem) {
+			await this.notifyChanges([
+				{
+					item: deletedItem,
+					partition: deletedItem[this.schema.partition],
+					sort: this.schema.sort ? deletedItem[this.schema.sort] : null,
+					table: this.table,
+					type: 'DELETE'
+				}
+			]);
+		}
 
 		return deletedItem;
 	}
 
-	async deleteMany(item: ItemRaw, options?: DeleteManyOptions): Promise<ItemPersisted<T>[]> {
-		options = _.defaults({}, options, DEFAULT_DELETE_MANY_OPTIONS);
-
-		const { items } = this.schema.sort ? await this.query(item, {
+	async deleteMany(
+		options: Omit<FilterOptions, 'chunkLimit' | 'consitentRead' | 'limit' | 'onChunk' | 'startKey'>
+	): Promise<PersistedItem<T>[]> {
+		const { items } = await this.filter({
 			...options,
-			all: true,
+			consistentRead: true,
+			limit: Infinity,
 			onChunk: async ({ items }) => {
 				await this.batchDelete(items);
-			}
-		}) : await this.scan({
-			...options,
-			all: true,
-			attributeNames: {
-				...options.attributeNames,
-				'#__pk': this.schema.partition
 			},
-			attributeValues: {
-				...options.attributeValues,
-				':__pk': item[this.schema.partition]
-			},
-			filterExpression: options.filterExpression || '#__pk = :__pk',
-			onChunk: async ({ items }) => {
-				await this.batchDelete(items);
-			}
+			startKey: null
 		});
-
-		if (_.size(items)) {
-			await this.notifyChanges(
-				_.map(items, item => {
-					return {
-						item,
-						partition: item[this.schema.partition],
-						sort: this.schema.sort ? item[this.schema.sort] : null,
-						table: this.table,
-						type: 'DELETE'
-					} as ChangeEvent<T>;
-				})
-			);
-		}
 
 		return items;
 	}
 
-	async get(item: ItemRaw, options?: GetOptions): Promise<ItemPersisted<T> | null> {
-		options = _.defaults({}, options, DEFAULT_GET_OPTIONS);
+	async filter(options: FilterOptions<T>): Promise<MultiResponse<T>> {
+		let res: MultiResponse<T> = {
+			count: 0,
+			items: [],
+			lastEvaluatedKey: null
+		};
 
-		const res = await this.query(item, {
+		if (!options.item && !options.queryExpression && !options.filterExpression) {
+			throw new Error('Must provide either item, queryExpression or filterExpression');
+		}
+
+		if (options.item) {
+			res = await this.query({
+				...options,
+				item: options.item
+			});
+		} else if (options.queryExpression) {
+			res = await this.query({
+				...options,
+				queryExpression: options.queryExpression
+			});
+		} else if (options.filterExpression) {
+			res = await this.scan({
+				...options,
+				filterExpression: options.filterExpression
+			});
+		}
+
+		return res;
+	}
+
+	async get(options: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>): Promise<PersistedItem<T> | null> {
+		const { items } = await this.filter({
 			...options,
-			consistentRead: options.consistentRead,
+			onChunk: () => {},
 			limit: 1,
-			select: options.select
+			startKey: null
 		});
 
-		return _.size(res.items) > 0 ? res.items[0] : null;
+		return _.size(items) > 0 ? items[0] : null;
+	}
+
+	private getLastEvaluatedKey(items: Dict[], index?: string): Dict | null {
+		if (!_.size(items)) {
+			return null;
+		}
+
+		const lastItem = _.last(items)!;
+
+		if (index) {
+			return {
+				...this.getSchemaKeys(lastItem, index),
+				...this.getSchemaKeys(lastItem)
+			};
+		}
+
+		return this.getSchemaKeys(lastItem);
+	}
+
+	private getSchemaKeys(item: Dict, index?: string) {
+		if (index) {
+			const matchedIndex = _.find(this.indexes, { name: index });
+
+			if (matchedIndex) {
+				return _.pick(item, _.compact([matchedIndex.partition, matchedIndex.sort]));
+			}
+		}
+
+		return _.pick(item, _.compact([this.schema.partition, this.schema.sort]));
 	}
 
 	private async notifyChanges(events: ChangeEvent[]) {
@@ -486,7 +449,329 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 		await this.onChange(events);
 	}
 
-	optimisticResolveSchema(item: Record<string, string>): { index: string; schema: TableSchema } {
+	async put(
+		item: Dict,
+		options?: {
+			attributeNames?: Record<string, string>;
+			attributeValues?: Record<string, string | number>;
+			conditionExpression?: string;
+			overwrite?: boolean;
+		},
+		ts: number = _.now()
+	): Promise<PersistedItem<T>> {
+		options = options || {};
+
+		let conditionExpression = '';
+
+		if (!options.overwrite) {
+			conditionExpression = 'attribute_not_exists(#__pk)';
+			options.attributeNames = {
+				...options.attributeNames,
+				'#__pk': this.schema.partition
+			};
+		}
+
+		if (options.conditionExpression) {
+			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
+		}
+
+		const nowISO = new Date().toISOString();
+		const persistedItem = {
+			...item,
+			__createdAt: item.__createdAt ?? nowISO,
+			__ts: ts,
+			__updatedAt: nowISO
+		} as PersistedItem<T>;
+
+		const putCommandInput: PutCommandInput = {
+			Item: persistedItem,
+			TableName: this.table
+		};
+
+		if (options.attributeNames) {
+			putCommandInput.ExpressionAttributeNames = options.attributeNames;
+		}
+
+		if (options.attributeValues) {
+			putCommandInput.ExpressionAttributeValues = options.attributeValues;
+		}
+
+		if (conditionExpression) {
+			putCommandInput.ConditionExpression = conditionExpression;
+		}
+
+		await this.client.send(new PutCommand(putCommandInput));
+		await this.notifyChanges([
+			{
+				item: persistedItem,
+				partition: item[this.schema.partition],
+				sort: this.schema.sort ? item[this.schema.sort] : null,
+				table: this.table,
+				type: 'PUT'
+			}
+		]);
+
+		return persistedItem;
+	}
+
+	async query(options: {
+		attributeNames?: Record<string, string>;
+		attributeValues?: Record<string, string | number>;
+		chunkLimit?: number;
+		consistentRead?: boolean;
+		filterExpression?: string;
+		index?: string;
+		item?: Dict;
+		limit?: number;
+		onChunk?: ({ count, items }: { count: number; items: PersistedItem<T>[] }) => Promise<void> | void;
+		prefix?: boolean;
+		queryExpression?: string;
+		select?: string[];
+		startKey?: Dict | null;
+	}): Promise<MultiResponse<T>> {
+		if (!options.item && !options.queryExpression) {
+			throw new Error('Must provide either item or queryExpression');
+		}
+
+		options = _.defaults({}, options, {
+			chunkLimit: Infinity,
+			limit: 100
+		});
+
+		const queryCommandInput: QueryCommandInput = {
+			ConsistentRead: options.consistentRead ?? false,
+			TableName: this.table
+		};
+
+		if (_.size(options.attributeNames) > 0) {
+			queryCommandInput.ExpressionAttributeNames = options.attributeNames;
+		}
+
+		if (_.size(options.attributeValues) > 0) {
+			queryCommandInput.ExpressionAttributeValues = options.attributeValues;
+		}
+
+		if (_.isFinite(options.chunkLimit)) {
+			queryCommandInput.Limit = options.chunkLimit;
+		} else if (_.isFinite(options.limit)) {
+			queryCommandInput.Limit = options.limit;
+		}
+
+		if (options.filterExpression) {
+			queryCommandInput.FilterExpression = options.filterExpression;
+		}
+
+		if (options.index) {
+			queryCommandInput.IndexName = options.index;
+		}
+
+		if (_.size(options.select) > 0) {
+			queryCommandInput.ExpressionAttributeNames = {
+				...queryCommandInput.ExpressionAttributeNames,
+				..._.reduce(
+					options.select,
+					(reduction, attr, index) => {
+						reduction[`#__pe${index + 1}`] = attr;
+
+						return reduction;
+					},
+					{} as Record<string, string>
+				)
+			};
+
+			queryCommandInput.ProjectionExpression = _.map(options.select, (attr, index) => {
+				return `#__pe${index + 1}`;
+			}).join(', ');
+		}
+
+		if (options.startKey) {
+			queryCommandInput.ExclusiveStartKey = options.startKey;
+		}
+
+		if (options.item) {
+			const { index, schema } = this.resolveSchema(options.item);
+
+			queryCommandInput.KeyConditionExpression = '#__pk = :__pk';
+			queryCommandInput.ExpressionAttributeNames = {
+				...queryCommandInput.ExpressionAttributeNames,
+				'#__pk': schema.partition
+			};
+
+			queryCommandInput.ExpressionAttributeValues = {
+				...queryCommandInput.ExpressionAttributeValues,
+				':__pk': options.item[schema.partition]
+			};
+
+			if (index) {
+				if (index !== 'sort' && !queryCommandInput.IndexName) {
+					queryCommandInput.IndexName = index;
+				}
+
+				if (schema.sort) {
+					if (options.prefix) {
+						queryCommandInput.KeyConditionExpression += ' AND begins_with(#__sk, :__sk)';
+					} else {
+						queryCommandInput.KeyConditionExpression += ' AND #__sk = :__sk';
+					}
+
+					queryCommandInput.ExpressionAttributeNames = {
+						...queryCommandInput.ExpressionAttributeNames,
+						'#__sk': schema.sort
+					};
+
+					queryCommandInput.ExpressionAttributeValues = {
+						...queryCommandInput.ExpressionAttributeValues,
+						':__sk': options.item[schema.sort]
+					};
+				}
+			}
+
+			if (options.queryExpression) {
+				queryCommandInput.KeyConditionExpression = concatConditionExpression(
+					queryCommandInput.KeyConditionExpression,
+					options.queryExpression
+				);
+			}
+		} else if (options.queryExpression) {
+			queryCommandInput.KeyConditionExpression = options.queryExpression;
+		}
+
+		let res = await this.client.send(new QueryCommand(queryCommandInput));
+		let items = (res.Items || []) as PersistedItem<T>[];
+		let count = _.size(items);
+		let evaluateLimit = queryCommandInput.Limit ?? Infinity;
+
+		if (_.isFunction(options.onChunk)) {
+			await options.onChunk({ count, items });
+		}
+
+		while (res.LastEvaluatedKey && count < options.limit!) {
+			// if less than limit, increase limit to get more items
+			evaluateLimit *= 2;
+
+			res = await this.client.send(
+				new QueryCommand({
+					...queryCommandInput,
+					ExclusiveStartKey: res.LastEvaluatedKey,
+					Limit: evaluateLimit
+				})
+			);
+
+			if (_.isFunction(options.onChunk)) {
+				await options.onChunk({
+					count: _.size(res.Items),
+					items: (res.Items || []) as PersistedItem<T>[]
+				});
+			}
+
+			if (res.Items) {
+				items = [...items, ...(res.Items as PersistedItem<T>[])];
+				count = _.size(items);
+			}
+		}
+
+		items = _.take(items, options.limit);
+		count = _.size(items);
+
+		return {
+			count,
+			items,
+			lastEvaluatedKey: res.LastEvaluatedKey ? this.getLastEvaluatedKey(items, queryCommandInput.IndexName) : null
+		};
+	}
+
+	async replace(
+		item: Dict,
+		replacedItem: PersistedItem,
+		options?: {
+			attributeNames?: Record<string, string>;
+			attributeValues?: Record<string, string | number>;
+			conditionExpression?: string;
+			overwrite?: boolean;
+		},
+		ts: number = _.now()
+	): Promise<PersistedItem<T>> {
+		options = options || {};
+
+		const nowISO = new Date().toISOString();
+		const newItem = {
+			...item,
+			__createdAt: replacedItem.__createdAt ?? nowISO,
+			__ts: ts,
+			__updatedAt: nowISO
+		} as PersistedItem<T>;
+
+		const deleteCommandInput: DeleteCommandInput = {
+			ConditionExpression: '#__ts = :__ts',
+			ExpressionAttributeNames: { '#__ts': '__ts' },
+			ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+			Key: this.getSchemaKeys(replacedItem),
+			TableName: this.table
+		};
+
+		const putCommandInput: PutCommandInput = {
+			Item: newItem,
+			TableName: this.table
+		};
+
+		if (!options.overwrite) {
+			putCommandInput.ConditionExpression = 'attribute_not_exists(#__pk)';
+			putCommandInput.ExpressionAttributeNames = {
+				...putCommandInput.ExpressionAttributeNames,
+				'#__pk': this.schema.partition
+			};
+		}
+
+		if (_.size(options.attributeNames) > 0) {
+			putCommandInput.ExpressionAttributeNames = {
+				...putCommandInput.ExpressionAttributeNames,
+				...options.attributeNames
+			};
+		}
+
+		if (_.size(options.attributeValues) > 0) {
+			putCommandInput.ExpressionAttributeValues = options.attributeValues;
+		}
+
+		if (options.conditionExpression) {
+			putCommandInput.ConditionExpression = concatConditionExpression(
+				putCommandInput.ConditionExpression || '',
+				options.conditionExpression
+			);
+		}
+
+		await this.transaction({
+			TransactItems: [
+				{
+					Delete: deleteCommandInput
+				},
+				{
+					Put: putCommandInput
+				}
+			]
+		});
+
+		await this.notifyChanges([
+			{
+				item: replacedItem,
+				partition: replacedItem[this.schema.partition],
+				sort: this.schema.sort ? replacedItem[this.schema.sort] : null,
+				table: this.table,
+				type: 'DELETE'
+			},
+			{
+				item: newItem,
+				partition: newItem[this.schema.partition],
+				sort: this.schema.sort ? newItem[this.schema.sort] : null,
+				table: this.table,
+				type: 'PUT'
+			}
+		]);
+
+		return newItem;
+	}
+
+	private resolveSchema(item: Dict): { index: string; schema: TableSchema } {
 		// test if has partition and sort keys
 		if (_.has(item, this.schema.partition) && this.schema.sort && _.has(item, this.schema.sort)) {
 			return {
@@ -530,157 +815,53 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 		return { index: '', schema: { partition: '', sort: '' } };
 	}
 
-	async put(item: ItemRaw, options?: PutOptions, ts = _.now()): Promise<ItemPersisted<T>> {
-		options = _.defaults({}, options, DEFAULT_PUT_OPTIONS);
+	async scan(options?: {
+		attributeNames?: Record<string, string>;
+		attributeValues?: Record<string, string | number>;
+		chunkLimit?: number;
+		consistentRead?: boolean;
+		filterExpression?: string;
+		index?: string;
+		limit?: number;
+		onChunk?: ({ count, items }: { count: number; items: PersistedItem<T>[] }) => Promise<void> | void;
+		select?: string[];
+		startKey?: Dict | null;
+	}): Promise<MultiResponse<T>> {
+		options = _.defaults({}, options, {
+			chunkLimit: Infinity,
+			limit: 100
+		});
 
-		let conditionExpression = '';
-
-		if (!options.overwrite) {
-			conditionExpression = '(attribute_not_exists(#__pk))';
-			options.attributeNames = {
-				...options.attributeNames,
-				'#__pk': this.schema.partition
-			};
-		}
-
-		if (options.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
-		}
-
-		const nowISO = new Date().toISOString();
-		const persistedItem = {
-			...item,
-			__createdAt: item.__createdAt ?? nowISO,
-			__ts: ts,
-			__updatedAt: nowISO
-		} as ItemPersisted<T>;
-
-		const putParams: PutCommandInput = {
-			Item: persistedItem,
+		const scanCommandInput: ScanCommandInput = {
+			ConsistentRead: options.consistentRead ?? false,
 			TableName: this.table
 		};
 
-		if (conditionExpression) {
-			putParams.ConditionExpression = conditionExpression;
+		if (_.size(options.attributeNames) > 0) {
+			scanCommandInput.ExpressionAttributeNames = options.attributeNames;
 		}
 
-		if (_.size(options.attributeNames)) {
-			putParams.ExpressionAttributeNames = options.attributeNames;
+		if (_.size(options.attributeValues) > 0) {
+			scanCommandInput.ExpressionAttributeValues = options.attributeValues;
 		}
 
-		if (_.size(options.attributeValues)) {
-			putParams.ExpressionAttributeValues = options.attributeValues;
-		}
-
-		await this.client.send(new PutCommand(putParams));
-		await this.notifyChanges([
-			{
-				item: persistedItem,
-				partition: item[this.schema.partition],
-				sort: this.schema.sort ? item[this.schema.sort] : null,
-				table: this.table,
-				type: 'PUT'
-			}
-		]);
-
-		return persistedItem;
-	}
-
-	async query(
-		item: ItemRaw,
-		options?: QueryOptions<T>
-	): Promise<{
-		count: number;
-		items: ItemPersisted<T>[];
-		lastEvaluatedKey: Record<string, string> | null;
-	}> {
-		options = _.defaults({}, options, DEFAULT_QUERY_OPTIONS);
-
-		let queryParams: QueryCommandInput = {
-			ConsistentRead: options.consistentRead,
-			ExpressionAttributeNames: {},
-			ExpressionAttributeValues: {},
-			KeyConditionExpression: '#__pk = :__pk',
-			TableName: this.table
-		};
-
-		if (options.limit && options.limit !== Infinity) {
-			queryParams.Limit = options.limit;
-		}
-
-		if (options.startKey) {
-			queryParams.ExclusiveStartKey = options.startKey;
-		}
-
-		let { index, schema } = this.optimisticResolveSchema(item);
-
-		if (options.index) {
-			queryParams.IndexName = options.index;
-		}
-
-		queryParams = {
-			...queryParams,
-			ExpressionAttributeNames: {
-				...queryParams.ExpressionAttributeNames,
-				'#__pk': schema.partition
-			},
-			ExpressionAttributeValues: {
-				...queryParams.ExpressionAttributeValues,
-				':__pk': item[schema.partition]
-			}
-		};
-
-		if (index) {
-			if (index !== 'sort' && !queryParams.IndexName) {
-				queryParams.IndexName = index;
-			}
-
-			if (schema.sort) {
-				if (options.prefix) {
-					queryParams.KeyConditionExpression += ' AND begins_with(#__sk, :__sk)';
-				} else {
-					queryParams.KeyConditionExpression += ' AND #__sk = :__sk';
-				}
-
-				queryParams = {
-					...queryParams,
-					ExpressionAttributeNames: {
-						...queryParams.ExpressionAttributeNames,
-						'#__sk': schema.sort
-					},
-					ExpressionAttributeValues: {
-						...queryParams.ExpressionAttributeValues,
-						':__sk': item[schema.sort]
-					}
-				};
-			}
-		}
-
-		if (_.size(options.attributeNames)) {
-			queryParams.ExpressionAttributeNames = {
-				...queryParams.ExpressionAttributeNames,
-				...options.attributeNames
-			};
-		}
-
-		if (_.size(options.attributeValues)) {
-			queryParams.ExpressionAttributeValues = {
-				...queryParams.ExpressionAttributeValues,
-				...options.attributeValues
-			};
-		}
-
-		if (options.expression) {
-			queryParams.KeyConditionExpression = concatConditionExpression(queryParams.KeyConditionExpression || '', options.expression);
+		if (_.isFinite(options.chunkLimit)) {
+			scanCommandInput.Limit = options.chunkLimit;
+		} else if (_.isFinite(options.limit)) {
+			scanCommandInput.Limit = options.limit;
 		}
 
 		if (options.filterExpression) {
-			queryParams.FilterExpression = options.filterExpression;
+			scanCommandInput.FilterExpression = options.filterExpression;
+		}
+
+		if (options.index) {
+			scanCommandInput.IndexName = options.index;
 		}
 
 		if (_.size(options.select) > 0) {
-			queryParams.ExpressionAttributeNames = {
-				...queryParams.ExpressionAttributeNames,
+			scanCommandInput.ExpressionAttributeNames = {
+				...scanCommandInput.ExpressionAttributeNames,
 				..._.reduce(
 					options.select,
 					(reduction, attr, index) => {
@@ -692,220 +873,108 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 				)
 			};
 
-			queryParams.ProjectionExpression = _.map(options.select, (attr, index) => {
+			scanCommandInput.ProjectionExpression = _.map(options.select, (attr, index) => {
 				return `#__pe${index + 1}`;
 			}).join(', ');
-		}
-
-		let res = await this.client.send(new QueryCommand(queryParams));
-		let items = (res.Items || []) as ItemPersisted<T>[];
-
-		if (_.isFunction(options.onChunk)) {
-			await options.onChunk({
-				count: _.size(items),
-				items
-			});
-		}
-
-		if (options.all) {
-			while (res.LastEvaluatedKey) {
-				res = await this.client.send(
-					new QueryCommand({
-						...queryParams,
-						ExclusiveStartKey: res.LastEvaluatedKey
-					})
-				);
-
-				if (_.isFunction(options.onChunk)) {
-					await options.onChunk({
-						count: _.size(res.Items),
-						items: (res.Items || []) as ItemPersisted<T>[]
-					});
-				}
-
-				if (res.Items) {
-					items = [...items, ...(res.Items as ItemPersisted<T>[])];
-				}
-			}
-		}
-
-		return {
-			count: _.size(items),
-			items,
-			lastEvaluatedKey: res.LastEvaluatedKey || null
-		};
-	}
-
-	private async replace(item: ItemRaw, replacedItem: ItemPersisted, options?: UpdateOptions<T>, ts = _.now()): Promise<ItemPersisted<T>> {
-		const deleteParams = {
-			Delete: {
-				Key: this.schema.sort
-					? {
-							[this.schema.partition]: replacedItem[this.schema.partition],
-							[this.schema.sort]: replacedItem[this.schema.sort]
-						}
-					: {
-							[this.schema.partition]: replacedItem[this.schema.partition]
-						},
-				TableName: this.table
-			}
-		};
-
-		const nowISO = new Date().toISOString();
-		const newItem = {
-			...item,
-			__createdAt: replacedItem.__createdAt ?? nowISO,
-			__ts: ts,
-			__updatedAt: nowISO
-		} as ItemPersisted<T>;
-
-		const putParams: PutCommandInput = {
-			Item: newItem,
-			TableName: this.table
-		};
-
-		if (options?.conditionExpression) {
-			putParams.ConditionExpression = options.conditionExpression;
-		}
-
-		if (options?.attributeNames && _.size(options.attributeNames)) {
-			putParams.ExpressionAttributeNames = options.attributeNames;
-		}
-
-		if (options?.attributeValues && _.size(options.attributeValues)) {
-			putParams.ExpressionAttributeValues = options.attributeValues;
-		}
-
-		await this.client.send(
-			new TransactWriteCommand({
-				TransactItems: [deleteParams, { Put: putParams }]
-			})
-		);
-
-		await this.notifyChanges([
-			{
-				item: replacedItem,
-				partition: replacedItem[this.schema.partition],
-				sort: this.schema.sort ? replacedItem[this.schema.sort] : null,
-				table: this.table,
-				type: 'DELETE'
-			},
-			{
-				item: newItem,
-				partition: newItem[this.schema.partition],
-				sort: this.schema.sort ? newItem[this.schema.sort] : null,
-				table: this.table,
-				type: 'PUT'
-			}
-		]);
-
-		return newItem;
-	}
-
-	async scan(options?: ScanOptions<T>): Promise<{
-		count: number;
-		items: ItemPersisted<T>[];
-		lastEvaluatedKey: Record<string, string> | null;
-	}> {
-		options = _.defaults({}, options, DEFAULT_SCAN_OPTIONS);
-
-		let scanParams: ScanCommandInput = {
-			ConsistentRead: options.consistentRead,
-			TableName: this.table
-		};
-
-		if (options.index) {
-			scanParams.IndexName = options.index;
-		}
-
-		if (options.limit && options.limit !== Infinity) {
-			scanParams.Limit = options.limit;
 		}
 
 		if (options.startKey) {
-			scanParams.ExclusiveStartKey = options.startKey;
+			scanCommandInput.ExclusiveStartKey = options.startKey;
 		}
 
-		if (_.size(options.attributeNames)) {
-			scanParams.ExpressionAttributeNames = options.attributeNames;
-		}
-
-		if (_.size(options.attributeValues)) {
-			scanParams.ExpressionAttributeValues = options.attributeValues;
-		}
-
-		if (options.filterExpression) {
-			scanParams.FilterExpression = options.filterExpression;
-		}
-
-		if (_.size(options.select) > 0) {
-			scanParams.ExpressionAttributeNames = {
-				...scanParams.ExpressionAttributeNames,
-				..._.reduce(
-					options.select,
-					(reduction, attr, index) => {
-						reduction[`#__pe${index + 1}`] = attr;
-
-						return reduction;
-					},
-					{} as Record<string, string>
-				)
-			};
-
-			scanParams.ProjectionExpression = _.map(options.select, (attr, index) => {
-				return `#__pe${index + 1}`;
-			}).join(', ');
-		}
-
-		let res = await this.client.send(new ScanCommand(scanParams));
-		let items = (res.Items || []) as ItemPersisted<T>[];
+		let res = await this.client.send(new ScanCommand(scanCommandInput));
+		let items = (res.Items || []) as PersistedItem<T>[];
+		let count = _.size(items);
+		let evaluateLimit = scanCommandInput.Limit ?? Infinity;
 
 		if (_.isFunction(options.onChunk)) {
-			await options.onChunk({
-				count: _.size(items),
-				items
-			});
+			await options.onChunk({ count, items });
 		}
 
-		if (options.all) {
-			while (res.LastEvaluatedKey) {
-				res = await this.client.send(
-					new ScanCommand({
-						...scanParams,
-						ExclusiveStartKey: res.LastEvaluatedKey
-					})
-				);
+		while (res.LastEvaluatedKey && count < options.limit!) {
+			// if less than limit, increase limit to get more items
+			evaluateLimit *= 2;
 
-				if (_.isFunction(options.onChunk)) {
-					await options.onChunk({
-						count: _.size(res.Items),
-						items: (res.Items || []) as ItemPersisted<T>[]
-					});
-				}
+			res = await this.client.send(
+				new ScanCommand({
+					...scanCommandInput,
+					ExclusiveStartKey: res.LastEvaluatedKey,
+					Limit: evaluateLimit
+				})
+			);
 
-				if (res.Items) {
-					items = [...items, ...(res.Items as ItemPersisted<T>[])];
-				}
+			if (_.isFunction(options.onChunk)) {
+				await options.onChunk({
+					count: _.size(res.Items),
+					items: (res.Items || []) as PersistedItem<T>[]
+				});
+			}
+
+			if (res.Items) {
+				items = [...items, ...(res.Items as PersistedItem<T>[])];
+				count = _.size(items);
 			}
 		}
 
+		items = _.take(items, options.limit);
+		count = _.size(items);
+
 		return {
-			count: _.size(items),
+			count,
 			items,
-			lastEvaluatedKey: res.LastEvaluatedKey || null
+			lastEvaluatedKey: res.LastEvaluatedKey ? this.getLastEvaluatedKey(items, scanCommandInput.IndexName) : null
 		};
 	}
 
-	async update(item: ItemRaw, options?: UpdateOptions<T>, ts = _.now()): Promise<ItemPersisted<T>> {
-		options = _.defaults({}, options, DEFAULT_UPDATE_OPTIONS);
+	async transaction(input: TransactWriteCommandInput) {
+		let chunks = _.chunk(input.TransactItems, 100);
+		let output: TransactWriteCommandOutput[] = [];
 
-		let current = await this.get(item);
+		for (const chunk of chunks) {
+			output = [
+				...output,
+				await this.client.send(
+					new TransactWriteCommand({
+						ReturnConsumedCapacity: input.ReturnConsumedCapacity ?? 'TOTAL',
+						ReturnItemCollectionMetrics: input.ReturnItemCollectionMetrics ?? 'NONE',
+						TransactItems: chunk
+					})
+				)
+			];
+		}
 
-		if (!current && !options.upsert) {
+		return output;
+	}
+
+	async update(
+		options: {
+			allowUpdatePartitionAndSort?: boolean;
+			attributeNames?: Record<string, string>;
+			attributeValues?: Record<string, string | number>;
+			conditionExpression?: string;
+			filter: Omit<FilterOptions, 'limit' | 'onChunk' | 'startKey'>;
+			updateExpression?: string;
+			updateFunction?: (item: PersistedItem<T> | Dict, exists: boolean) => Dict;
+			upsert?: boolean;
+		},
+		ts: number = _.now()
+	): Promise<PersistedItem<T>> {
+		if (!options.updateFunction && !options.updateExpression) {
+			throw new Error('updateFunction or updateExpression must be provided');
+		}
+
+		const currentItem = await this.get(options.filter);
+
+		if (!currentItem && !options.upsert) {
 			throw new Error('Item not found');
 		}
 
+		if (!currentItem && !options.filter.item) {
+			throw new Error('Existing item or filter.item must be provided');
+		}
+
 		let conditionExpression = '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)';
+		let referenceKey = this.getSchemaKeys(currentItem || options.filter.item!);
 
 		if (options.conditionExpression) {
 			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
@@ -918,14 +987,14 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 
 		options.attributeValues = {
 			...options.attributeValues,
-			':__curr_ts': current?.__ts ?? 0
+			':__curr_ts': currentItem?.__ts ?? 0
 		};
 
-		if (options.expression) {
+		if (options.updateExpression) {
 			const nowISO = new Date().toISOString();
 
-			options.expression = concatUpdateExpression(
-				options.expression,
+			options.updateExpression = concatUpdateExpression(
+				options.updateExpression,
 				'SET #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up'
 			);
 
@@ -955,27 +1024,20 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 					ConditionExpression: conditionExpression,
 					ExpressionAttributeNames: options.attributeNames,
 					ExpressionAttributeValues: options.attributeValues,
-					Key: this.schema.sort
-						? {
-								[this.schema.partition]: item[this.schema.partition],
-								[this.schema.sort]: item[this.schema.sort]
-							}
-						: {
-								[this.schema.partition]: item[this.schema.partition]
-							},
+					Key: referenceKey,
 					ReturnValues: 'ALL_NEW',
 					TableName: this.table,
-					UpdateExpression: options.expression
+					UpdateExpression: options.updateExpression
 				})
 			);
 
-			const updatedItem = res.Attributes as ItemPersisted<T>;
+			const updatedItem = res.Attributes as PersistedItem<T>;
 
 			await this.notifyChanges([
 				{
 					item: updatedItem,
-					partition: item[this.schema.partition],
-					sort: this.schema.sort ? item[this.schema.sort] : null,
+					partition: updatedItem[this.schema.partition],
+					sort: this.schema.sort ? updatedItem[this.schema.sort] : null,
 					table: this.table,
 					type: 'UPDATE'
 				}
@@ -983,25 +1045,25 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 
 			return updatedItem;
 		}
+		// end of updateExpression
 
-		if (_.isFunction(options.updateFn)) {
-			const updateFnRes = options.updateFn(_.isNil(current) ? item : current);
+		const updatedItem = options.updateFunction!(currentItem || referenceKey, Boolean(currentItem));
 
-			if (!_.isNil(updateFnRes)) {
-				item = updateFnRes;
-			}
-		}
-
-		if (current && options.allowUpdatePartitionAndSort) {
+		if (currentItem && options.allowUpdatePartitionAndSort) {
 			if (
-				item[this.schema.partition] !== current[this.schema.partition] ||
-				(this.schema.sort && item[this.schema.sort] !== current[this.schema.sort])
+				updatedItem[this.schema.partition] !== currentItem[this.schema.partition] ||
+				(this.schema.sort && updatedItem[this.schema.sort] !== currentItem[this.schema.sort])
 			) {
-				return this.replace(item, current, {
-					attributeNames: options.attributeNames,
-					attributeValues: options.attributeValues,
-					conditionExpression
-				}, ts);
+				return this.replace(
+					updatedItem,
+					currentItem,
+					{
+						attributeNames: options.attributeNames,
+						attributeValues: options.attributeValues,
+						conditionExpression
+					},
+					ts
+				);
 			}
 		}
 
@@ -1014,7 +1076,7 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 			};
 		}
 
-		return this.put(item as T, {
+		return this.put(updatedItem, {
 			attributeNames: options.attributeNames,
 			attributeValues: options.attributeValues,
 			conditionExpression,
@@ -1152,6 +1214,6 @@ class Dynamodb<T extends ItemRaw = ItemRaw> {
 	}
 }
 
-export { ChangeEvent, ChangeType, ItemPersisted, ItemRaw };
+export { ChangeEvent, ChangeType, PersistedItem, Dict };
 export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;
