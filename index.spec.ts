@@ -1,4 +1,4 @@
-import _, { before } from 'lodash';
+import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Db, { concatConditionExpression, concatUpdateExpression } from './index';
@@ -690,8 +690,8 @@ describe('/index.ts', () => {
 
 		it('should put', async () => {
 			const item = await db.put({
-				sk: 'sk-0',
-				pk: 'pk-0'
+				pk: 'pk-0',
+				sk: 'sk-0'
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
@@ -731,6 +731,7 @@ describe('/index.ts', () => {
 
 				throw new Error('expected to throw');
 			} catch (err) {
+				console.log(err);
 				expect((err as Error).name).toEqual('ConditionalCheckFailedException');
 			}
 		});
@@ -1807,6 +1808,53 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
+		
+		it('should update with updateFunction', async () => {
+			await db.batchWrite(createItems(1));
+
+			const item = await db.update({
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
+				}
+			});
+
+			expect(db.put).toHaveBeenCalledWith(
+				{
+					__createdAt: expect.any(String),
+					__ts: expect.any(Number),
+					__updatedAt: expect.any(String),
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-0',
+					lsiSk: 'lsi-sk-0',
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					attributeNames: {
+						'#__pk': 'pk',
+						'#__ts': '__ts'
+					},
+					attributeValues: { ':__curr_ts': expect.any(Number) },
+					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__curr_ts))',
+					overwrite: true
+				}
+			);
+
+			expect(item.__updatedAt).not.toEqual(item.__createdAt);
+			expect(item).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-0',
+					lsiSk: 'lsi-sk-0',
+					sk: 'sk-0',
+					pk: 'pk-0'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
+		});
 
 		it('should not update partition and sort', async () => {
 			await db.batchWrite(createItems(1));
@@ -1862,6 +1910,38 @@ describe('/index.ts', () => {
 			expect(item).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
+					pk: 'pk-0',
+					sk: 'sk-0'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+		
+		it('should upsert without updateFunction', async () => {
+			const item = await db.update({
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
+				},
+				upsert: true
+			});
+
+			expect(db.put).toHaveBeenCalledWith(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					attributeNames: { '#__ts': '__ts' },
+					attributeValues: { ':__curr_ts': expect.any(Number) },
+					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
+					overwrite: true
+				}
+			);
+
+			expect(item.__createdAt).toEqual(item.__updatedAt);
+			expect(item).toEqual(
+				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-0'
 				})

@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import { ConfiguredRetryStrategy } from '@smithy/util-retry';
 import {
 	BatchGetCommand,
 	BatchWriteCommand,
@@ -153,9 +154,9 @@ const concatUpdateExpression = (exp1: string, exp2: string): string => {
 
 class Dynamodb<T extends Dict = Dict> {
 	public client: DynamoDBDocumentClient;
+	public indexes: TableIndex[];
 	public schema: TableSchema;
 
-	private indexes: TableIndex[];
 	private onChange: OnChange | null;
 	private table: string;
 
@@ -166,7 +167,11 @@ class Dynamodb<T extends Dict = Dict> {
 					accessKeyId: options.accessKeyId,
 					secretAccessKey: options.secretAccessKey
 				},
-				region: options.region
+				maxAttempts: 4,
+				region: options.region,
+				retryStrategy: new ConfiguredRetryStrategy(4, (attempt: number) => {
+					return 100 + attempt * 1000;
+				})
 			})
 		);
 
@@ -186,7 +191,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const chunks = _.chunk(keys, 25);
 
 		for (const chunk of chunks) {
-			const r = await this.client.send(
+			await this.client.send(
 				new BatchWriteCommand({
 					RequestItems: {
 						[this.table]: _.map(chunk, key => {
@@ -959,10 +964,6 @@ class Dynamodb<T extends Dict = Dict> {
 		},
 		ts: number = _.now()
 	): Promise<PersistedItem<T>> {
-		if (!options.updateFunction && !options.updateExpression) {
-			throw new Error('updateFunction or updateExpression must be provided');
-		}
-
 		const currentItem = await this.get(options.filter);
 
 		if (!currentItem && !options.upsert) {
@@ -1047,7 +1048,7 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 		// end of updateExpression
 
-		const updatedItem = options.updateFunction!(currentItem || referenceKey, Boolean(currentItem));
+		const updatedItem = options.updateFunction ? options.updateFunction(currentItem || referenceKey, Boolean(currentItem)) : (currentItem || referenceKey);
 
 		if (currentItem && options.allowUpdatePartitionAndSort) {
 			if (
@@ -1214,6 +1215,6 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export { ChangeEvent, ChangeType, PersistedItem, Dict };
+export { ChangeEvent, ChangeType, PersistedItem, Dict, TableIndex };
 export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;
