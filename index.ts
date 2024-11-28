@@ -1048,7 +1048,9 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 		// end of updateExpression
 
-		const updatedItem = options.updateFunction ? options.updateFunction(currentItem || referenceKey, Boolean(currentItem)) : (currentItem || referenceKey);
+		const updatedItem = options.updateFunction
+			? options.updateFunction(currentItem || referenceKey, Boolean(currentItem))
+			: currentItem || referenceKey;
 
 		if (currentItem && options.allowUpdatePartitionAndSort) {
 			if (

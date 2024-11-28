@@ -731,7 +731,6 @@ describe('/index.ts', () => {
 
 				throw new Error('expected to throw');
 			} catch (err) {
-				console.log(err);
 				expect((err as Error).name).toEqual('ConditionalCheckFailedException');
 			}
 		});
@@ -1808,7 +1807,7 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
-		
+
 		it('should update with updateFunction', async () => {
 			await db.batchWrite(createItems(1));
 
@@ -1917,7 +1916,7 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
-		
+
 		it('should upsert without updateFunction', async () => {
 			const item = await db.update({
 				filter: {

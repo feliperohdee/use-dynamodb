@@ -345,7 +345,11 @@ describe('/index-no-sort.ts', () => {
 			expect(lastEvaluatedKey).toEqual({ pk: 'pk-1' });
 
 			vi.mocked(db.client.send).mockClear();
-			const { items: items2, count: count2, lastEvaluatedKey: lastEvaluatedKey2 } = await db.scan({
+			const {
+				items: items2,
+				count: count2,
+				lastEvaluatedKey: lastEvaluatedKey2
+			} = await db.scan({
 				startKey: lastEvaluatedKey
 			});
 
@@ -388,7 +392,7 @@ describe('/index-no-sort.ts', () => {
 		it('should upsert', async () => {
 			const item = await db.update({
 				filter: {
-					item: { pk: 'pk-0'  }
+					item: { pk: 'pk-0' }
 				},
 				updateFunction: item => {
 					return {
