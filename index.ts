@@ -47,11 +47,24 @@ type ChangeEvent<T extends Dict = Dict> = {
 
 type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void>;
 type TableSchema = { partition: string; sort?: string };
-type TableIndex = { name: string; partition: string; sort?: string; type: 'S' | 'N' };
+type TableGSI = {
+	name: string;
+	partition: string;
+	partitionType: 'S' | 'N';
+	sort?: string;
+	sortType?: 'S' | 'N';
+};
+
+type TableLSI = {
+	name: string;
+	partition: string;
+	sort?: string;
+	sortType: 'S' | 'N';
+};
 
 type ConstructorOptions = {
 	accessKeyId: string;
-	indexes?: TableIndex[];
+	indexes?: (TableGSI | TableLSI)[];
 	onChange?: OnChange;
 	region: string;
 	schema: TableSchema;
@@ -154,7 +167,7 @@ const concatUpdateExpression = (exp1: string, exp2: string): string => {
 
 class Dynamodb<T extends Dict = Dict> {
 	public client: DynamoDBDocumentClient;
-	public indexes: TableIndex[];
+	public indexes: (TableGSI | TableLSI)[];
 	public schema: TableSchema;
 
 	private onChange: OnChange | null;
@@ -247,7 +260,7 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	async batchWrite(items: Dict[], ts: number = _.now()): Promise<PersistedItem<T>[]> {
-		const nowISO = new Date().toISOString();
+		const nowISO = new Date(ts).toISOString();
 		const persistedItems = _.map(items, item => {
 			return {
 				...item,
@@ -480,7 +493,7 @@ class Dynamodb<T extends Dict = Dict> {
 			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
 		}
 
-		const nowISO = new Date().toISOString();
+		const nowISO = new Date(ts).toISOString();
 		const persistedItem = {
 			...item,
 			__createdAt: item.__createdAt ?? nowISO,
@@ -698,7 +711,7 @@ class Dynamodb<T extends Dict = Dict> {
 	): Promise<PersistedItem<T>> {
 		options = options || {};
 
-		const nowISO = new Date().toISOString();
+		const nowISO = new Date(ts).toISOString();
 		const newItem = {
 			...item,
 			__createdAt: replacedItem.__createdAt ?? nowISO,
@@ -992,7 +1005,7 @@ class Dynamodb<T extends Dict = Dict> {
 		};
 
 		if (options.updateExpression) {
-			const nowISO = new Date().toISOString();
+			const nowISO = new Date(ts).toISOString();
 
 			options.updateExpression = concatUpdateExpression(
 				options.updateExpression,
@@ -1100,7 +1113,7 @@ class Dynamodb<T extends Dict = Dict> {
 			if (inexistentTable) {
 				const gsi = _.filter(this.indexes, index => {
 					return index.partition !== this.schema.partition;
-				});
+				}) as TableGSI[];
 
 				const globalIndexes = _.map(gsi, index => {
 					return {
@@ -1127,12 +1140,12 @@ class Dynamodb<T extends Dict = Dict> {
 					return _.compact([
 						{
 							AttributeName: index.partition,
-							AttributeType: 'S'
+							AttributeType: index.partitionType
 						},
 						index.sort
 							? {
 									AttributeName: index.sort,
-									AttributeType: index.type
+									AttributeType: index.sortType
 								}
 							: null
 					]);
@@ -1140,7 +1153,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 				const lsi = _.filter(this.indexes, index => {
 					return index.partition === this.schema.partition;
-				});
+				}) as TableLSI[];
 
 				const localIndexes = _.map(lsi, index => {
 					return {
@@ -1165,7 +1178,7 @@ class Dynamodb<T extends Dict = Dict> {
 				const localIndexesDefinitions = _.map(lsi, index => {
 					return {
 						AttributeName: index.sort,
-						AttributeType: index.type
+						AttributeType: index.sortType
 					};
 				}) as AttributeDefinition[];
 
@@ -1217,6 +1230,6 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export { ChangeEvent, ChangeType, PersistedItem, Dict, TableIndex };
+export { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI, TableLSI };
 export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;

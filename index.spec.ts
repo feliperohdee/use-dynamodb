@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock,
 
 import Db, { concatConditionExpression, concatUpdateExpression } from './index';
 
-type DbRecord = {
+type Item = {
 	foo: string;
 	gsiPk: string;
 	gsiSk: string;
@@ -13,20 +13,20 @@ type DbRecord = {
 };
 
 const createItems = (count: number) => {
-	return _.times(count, i => {
+	return _.times(count, index => {
 		return {
-			foo: `foo-${i}`,
-			gsiPk: `gsi-pk-${i % 2}`,
-			gsiSk: `gsi-sk-${i}`,
-			lsiSk: `lsi-sk-${i}`,
-			sk: `sk-${i}`,
-			pk: `pk-${i % 2}`
+			foo: `foo-${index}`,
+			gsiPk: `gsi-pk-${index % 2}`,
+			gsiSk: `gsi-sk-${index}`,
+			lsiSk: `lsi-sk-${index}`,
+			sk: `sk-${index}`,
+			pk: `pk-${index % 2}`
 		};
 	});
 };
 
 const factory = ({ onChange }: { onChange: Mock }) => {
-	return new Db<DbRecord>({
+	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
 		region: 'us-east-1',
 		secretAccessKey: process.env.AWS_SECRET_KEY || '',
@@ -35,13 +35,14 @@ const factory = ({ onChange }: { onChange: Mock }) => {
 				name: 'ls-index',
 				partition: 'pk',
 				sort: 'lsiSk',
-				type: 'S'
+				sortType: 'S'
 			},
 			{
 				name: 'gs-index',
 				partition: 'gsiPk',
+				partitionType: 'S',
 				sort: 'gsiSk',
-				type: 'S'
+				sortType: 'S'
 			}
 		],
 		onChange,
@@ -51,7 +52,7 @@ const factory = ({ onChange }: { onChange: Mock }) => {
 };
 
 describe('/index.ts', () => {
-	let db: Db<DbRecord>;
+	let db: Db<Item>;
 	let onChangeMock: Mock;
 
 	beforeAll(async () => {

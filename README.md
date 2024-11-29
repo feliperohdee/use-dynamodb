@@ -4,14 +4,20 @@ A TypeScript library that provides a simplified interface for interacting with A
 
 ## 🚀 Features
 
-- ✅ Support for CRUD operations (Create, Read, Update, Delete)
-- 🔍 Support for local and global secondary indexes
-- 📦 Batch operations (batch write and delete)
-- 🔎 Optimized queries with filtering
-- 🔒 Conditional updates
-- 📄 Pagination support
-- 🔄 Upsert support
-- ⏱️ Automatic timestamp management
+- ✅ Type-safe CRUD operations (Create, Read, Update, Delete)
+- 🔍 Support for local and global secondary indexes (LSI & GSI)
+- 📦 Batch operations with automatic chunking
+- 🔎 Query and Scan operations with filtering
+- 🔄 Optimistic locking with versioning
+- 📄 Automatic pagination
+- 🕒 Built-in timestamp management (**createdAt, **updatedAt, \_\_ts)
+- 🔒 Conditional updates and transactions
+- 🎯 Change tracking with callbacks
+
+## 📚 Documentation
+
+- [Main Documentation](README.md) - Core DynamoDB wrapper functionality
+- [Layer Module Documentation](README_LAYERS.md) - Event sourcing and caching capabilities
 
 ## 📦 Installation
 
@@ -26,7 +32,16 @@ yarn add use-dynamodb
 ```typescript
 import Dynamodb from 'use-dynamodb';
 
-const dynamodb = new Dynamodb({
+type Item = {
+	pk: string;
+	sk: string;
+	gsiPk: string;
+	gsiSk: string;
+	lsiSk: string;
+	foo: string;
+};
+
+const db = new Dynamodb<Item>({
 	accessKeyId: 'YOUR_ACCESS_KEY',
 	secretAccessKey: 'YOUR_SECRET_KEY',
 	region: 'us-east-1',
@@ -37,214 +52,345 @@ const dynamodb = new Dynamodb({
 			name: 'ls-index',
 			partition: 'pk',
 			sort: 'lsiSk',
-			type: 'S'
+			sortType: 'S'
 		},
 		{
 			name: 'gs-index',
 			partition: 'gsiPk',
+			partitionType: 'S',
 			sort: 'gsiSk',
-			type: 'S'
+			sortType: 'S'
 		}
-	]
+	],
+	onChange: async events => {
+		// Optional callback for tracking changes
+		console.log('Changes:', events);
+	}
 });
+```
+
+### Table Operations
+
+#### Create Table
+
+```typescript
+await db.createTable();
 ```
 
 ### Basic Operations
 
-#### 📝 Create/Update Item (Put)
+#### Put Item
 
 ```typescript
-const item = await dynamodb.put({
+// Simple put with automatic condition to prevent overwrites
+const item = await db.put({
 	pk: 'user#123',
 	sk: 'profile',
-	name: 'John Doe',
-	email: 'john@example.com'
+	foo: 'bar'
 });
-```
 
-#### 📖 Get Item
-
-```typescript
-const item = await dynamodb.get({
-	pk: 'user#123',
-	sk: 'profile'
-});
-```
-
-#### 🔄 Update Item
-
-```typescript
-const updatedItem = await dynamodb.update(
+// Put with overwrite allowed
+const overwrittenItem = await db.put(
 	{
 		pk: 'user#123',
-		sk: 'profile'
+		sk: 'profile',
+		foo: 'baz'
 	},
 	{
-		updateFn: item => ({
-			...item,
-			email: 'newemail@example.com'
-		})
+		overwrite: true
 	}
 );
-```
 
-#### 🔄 Update Item (updating partition and sort)
-
-```typescript
-const updatedItem = await dynamodb.update(
+// Put with conditions
+const conditionalItem = await db.put(
 	{
 		pk: 'user#123',
-		sk: 'profile'
+		sk: 'profile',
+		foo: 'bar'
 	},
-	{
-		allowUpdatePartitionAndSort: true,
-		updateFn: item => ({
-			...item,
-			pk: 'user#123__disabled',
-			sk: 'profile',
-			email: 'newemail@example.com'
-		})
-	}
-);
-```
-
-#### 🗑️ Delete Item
-
-```typescript
-const deletedItem = await dynamodb.delete({
-	pk: 'user#123',
-	sk: 'profile'
-});
-```
-
-### Advanced Query Operations
-
-#### 🔍 Query Items
-
-```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.query(
-	{
-		pk: 'user#123'
-	},
-	{
-		consistentRead: true,
-		select: ['a', 'b']
-	}
-);
-```
-
-#### 🔎 Query with Filter
-
-```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.query(
-	{ pk: 'user#123' },
 	{
 		attributeNames: { '#foo': 'foo' },
-		attributeValues: { ':foo': 'foo-0' },
-		filterExpression: '#foo = :foo'
+		attributeValues: { ':foo': 'bar' },
+		conditionExpression: '#foo <> :foo'
 	}
 );
 ```
 
-#### 📄 Query with Pagination
+#### Get Item
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.query(
-	{ pk: 'user#123' },
-	{
-		limit: 10,
-		startKey: lastEvaluatedKey // from previous query
+// Get by partition and sort key
+const item = await db.get({
+	item: { pk: 'user#123', sk: 'profile' }
+});
+
+// Get with specific attributes
+const partialItem = await db.get({
+	item: { pk: 'user#123', sk: 'profile' },
+	select: ['foo']
+});
+
+// Get using query expression
+const queriedItem = await db.get({
+	attributeNames: { '#pk': 'pk' },
+	attributeValues: { ':pk': 'user#123' },
+	queryExpression: '#pk = :pk'
+});
+```
+
+#### Update Item
+
+```typescript
+// Update using function
+const updatedItem = await db.update({
+	filter: {
+		item: { pk: 'user#123', sk: 'profile' }
+	},
+	updateFunction: item => ({
+		...item,
+		foo: 'updated'
+	})
+});
+
+// Update using expression
+const expressionUpdatedItem = await db.update({
+	filter: {
+		item: { pk: 'user#123', sk: 'profile' }
+	},
+	attributeNames: { '#foo': 'foo' },
+	attributeValues: { ':foo': 'updated' },
+	updateExpression: 'SET #foo = :foo'
+});
+
+// Upsert
+const upsertedItem = await db.update({
+	filter: {
+		item: { pk: 'user#123', sk: 'profile' }
+	},
+	updateFunction: item => ({
+		...item,
+		foo: 'new'
+	}),
+	upsert: true
+});
+
+// Update with partition/sort key change
+const movedItem = await db.update({
+	allowUpdatePartitionAndSort: true,
+	filter: {
+		item: { pk: 'user#123', sk: 'profile' }
+	},
+	updateFunction: item => ({
+		...item,
+		pk: 'user#124'
+	})
+});
+```
+
+#### Delete Item
+
+```typescript
+// Delete by key
+const deletedItem = await db.delete({
+	filter: {
+		item: { pk: 'user#123', sk: 'profile' }
 	}
-);
+});
+
+// Delete with condition
+const conditionalDelete = await db.delete({
+	attributeNames: { '#foo': 'foo' },
+	attributeValues: { ':foo': 'bar' },
+	conditionExpression: '#foo = :foo',
+	filter: {
+		item: { pk: 'user#123', sk: 'profile' }
+	}
+});
+```
+
+### Query Operations
+
+```typescript
+// Query by partition key
+const { items, count, lastEvaluatedKey } = await db.query({
+	item: { pk: 'user#123' }
+});
+
+// Query with prefix matching
+const prefixResults = await db.query({
+	item: { pk: 'user#123', sk: 'profile#' },
+	prefix: true
+});
+
+// Query with filter
+const filteredResults = await db.query({
+	attributeNames: { '#foo': 'foo' },
+	attributeValues: { ':foo': 'bar' },
+	filterExpression: '#foo = :foo',
+	item: { pk: 'user#123' }
+});
+
+// Query with pagination
+const paginatedResults = await db.query({
+	item: { pk: 'user#123' },
+	limit: 10,
+	startKey: lastEvaluatedKey
+});
+
+// Query using index
+const indexResults = await db.query({
+	item: { gsiPk: 'status#active' },
+	index: 'gs-index'
+});
+
+// Query with chunks processing
+const chunkedResults = await db.query({
+	item: { pk: 'user#123' },
+	chunkLimit: 10,
+	onChunk: async ({ items, count }) => {
+		// Process items in chunks
+		console.log(`Processing ${count} items`);
+	}
+});
 ```
 
 ### Scan Operations
 
-#### 🔍 Scan Items
-
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.scan({
-	consistentRead: true,
-	select: ['a', 'b']
-});
-```
+// Basic scan
+const { items, count, lastEvaluatedKey } = await db.scan();
 
-#### 🔎 Scan with Filter
-
-```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.scan({
+// Filtered scan
+const filteredScan = await db.scan({
 	attributeNames: { '#foo': 'foo' },
-	attributeValues: { ':foo': 'foo-0' },
+	attributeValues: { ':foo': 'bar' },
 	filterExpression: '#foo = :foo'
 });
-```
 
-#### 📄 Scan with Pagination
+// Scan with selection
+const partialScan = await db.scan({
+	select: ['foo', 'bar']
+});
 
-```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.scan({
+// Paginated scan
+const paginatedScan = await db.scan({
 	limit: 10,
-	startKey: lastEvaluatedKey // from previous scan
+	startKey: lastEvaluatedKey
 });
 ```
 
 ### Batch Operations
 
-#### 📦 Batch Write
-
 ```typescript
-const items = [
-	{ pk: 'user#1', sk: 'profile', name: 'User 1' },
-	{ pk: 'user#2', sk: 'profile', name: 'User 2' }
-];
-await dynamodb.batchWrite(items);
+// Batch write
+const items = await db.batchWrite([
+	{ pk: 'user#1', sk: 'profile', foo: 'bar' },
+	{ pk: 'user#2', sk: 'profile', foo: 'baz' }
+]);
+
+// Batch get
+const retrievedItems = await db.batchGet([
+	{ pk: 'user#1', sk: 'profile' },
+	{ pk: 'user#2', sk: 'profile' }
+]);
+
+// Batch delete
+const deletedItems = await db.batchDelete([
+	{ pk: 'user#1', sk: 'profile' },
+	{ pk: 'user#2', sk: 'profile' }
+]);
+
+// Clear table
+await db.clear(); // Clear entire table
+await db.clear('user#123'); // Clear by partition key
 ```
 
-#### 🗑️ Batch Delete
+### Filter Operations
 
 ```typescript
-await dynamodb.batchDelete({ pk: 'user#123' });
-```
-
-### Using Indexes
-
-#### 🔍 Query using Local Secondary Index
-
-```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.query({
-	pk: 'user#123',
-	lsiSk: 'lsi-value'
+// Filter is a higher-level abstraction that combines query and scan
+const results = await db.filter({
+	item: { pk: 'user#123' }, // Uses query
+	// OR
+	queryExpression: '#pk = :pk', // Uses query
+	// OR
+	filterExpression: '#status = :status' // Uses scan
 });
 ```
 
-#### 🔎 Query using Global Secondary Index
+## Types
+
+### Key Types
 
 ```typescript
-const { items, count, lastEvaluatedKey } = await dynamodb.query({
-	gsiPk: 'gsi-partition-value',
-	gsiSk: 'gsi-sort-value'
-});
+type TableSchema = {
+	partition: string;
+	sort?: string;
+};
+
+type TableGSI = {
+	name: string;
+	partition: string;
+	partitionType: 'S' | 'N';
+	sort?: string;
+	sortType?: 'S' | 'N';
+};
+
+type TableLSI = {
+	name: string;
+	partition: string;
+	sort?: string;
+	sortType: 'S' | 'N';
+};
+```
+
+### Item Types
+
+```typescript
+type Dict = Record<string, any>;
+
+type PersistedItem<T extends Dict = Dict> = T & {
+	__createdAt: string;
+	__ts: number;
+	__updatedAt: string;
+};
+```
+
+### Change Tracking
+
+```typescript
+type ChangeType = 'PUT' | 'UPDATE' | 'DELETE';
+
+type ChangeEvent<T extends Dict = Dict> = {
+	item: PersistedItem<T>;
+	partition: string;
+	sort?: string | null;
+	table: string;
+	type: ChangeType;
+};
+
+type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void>;
 ```
 
 ## 🧪 Testing
 
-This library includes a comprehensive set of tests. To run the tests:
-
-1. Set the required environment variables:
-
 ```bash
-export AWS_REGION='us-east-1'
+# Set environment variables
 export AWS_ACCESS_KEY='YOUR_ACCESS_KEY'
 export AWS_SECRET_KEY='YOUR_SECRET_KEY'
-```
 
-2. Run the tests:
-
-```bash
+# Run tests
 yarn test
 ```
 
-Make sure to replace 'YOUR_ACCESS_KEY' and 'YOUR_SECRET_KEY' with your actual AWS credentials.
+## 📝 Notes
+
+- The library automatically handles optimistic locking using the `__ts` field
+- All write operations (put, update, delete) trigger change events if an onChange handler is provided
+- Batch operations automatically handle chunking according to DynamoDB limits
+- The library provides built-in retry strategy with exponential backoff
+- All timestamps are managed automatically (**createdAt, **updatedAt, \_\_ts)
+- Queries automatically handle pagination for large result sets
 
 ## 🙏 Acknowledgements
 
