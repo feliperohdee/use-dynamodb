@@ -7,7 +7,7 @@ The Layer module provides event sourcing and caching capabilities for DynamoDB, 
 - 🔄 Event-driven change tracking
 - 📝 Maintains modification history with cursors
 - 🔄 Eventual consistency with external storage
-- 🗃️ Namespace-based partitioning
+- 🗃️ Partition-based partitioning
 - ⏱️ TTL support for events
 - 🔍 Query support for both current and historical state
 
@@ -24,11 +24,11 @@ yarn add use-dynamodb
 ### Initialization
 
 ```typescript
-import { Dynamodb, Layer } from 'use-dynamodb';
+import Dynamodb from 'use-dynamodb';
 
 type Item = {
-	id: string;
-	namespace: string;
+	ps: string;
+	sk: string;
 	state: string;
 };
 
@@ -51,13 +51,13 @@ const eventDb = new Dynamodb<PendingEvent<Item>>({
 });
 
 // Then create the Layer instance
-const layer = new Layer({
+const layer = new Dynamodb.Layer({
 	db: eventDb,
 	table: 'source-table',
 	// Function to get partition key from item
-	getItemPartition: item => item.namespace,
+	getItemPartition: item => item.pk,
 	// Function to get unique identifier from item
-	getItemUniqueIdentifier: item => item.id,
+	getItemUniqueIdentifier: item => item.sk,
 	// Function to get current state from storage
 	getter: async partition => {
 		// Implement retrieval from your storage (e.g., S3)
@@ -77,8 +77,8 @@ const layer = new Layer({
 await layer.set([
 	{
 		item: {
-			id: 'item-1',
-			namespace: 'users',
+			pk: 'users',
+			sk: 'item-1',
 			state: 'active'
 		},
 		partition: 'users',
@@ -92,8 +92,8 @@ await layer.set([
 await layer.set([
 	{
 		item: {
-			id: 'item-1',
-			namespace: 'users',
+			partition: 'users',
+			sk: 'item-1',
 			state: 'active'
 		},
 		partition: 'users',
@@ -189,7 +189,7 @@ type LayerOptions<T extends Dict = Dict> = {
 4. **Performance**
    - Uses batching for write operations
    - Supports pagination for large datasets
-   - Efficient namespace-based partitioning
+   - Efficient partition-based partitioning
 
 ## Example Integration with S3
 
@@ -204,11 +204,11 @@ const s3 = new S3({
 	}
 });
 
-const layer = new Layer({
+const layer = new Dynamodb.Layer({
 	db: eventDb,
 	table: 'source-table',
-	getItemPartition: item => item.namespace,
-	getItemUniqueIdentifier: item => item.id,
+	getItemPartition: item => item.pk,
+	getItemUniqueIdentifier: item => item.sk,
 	getter: async partition => {
 		try {
 			const response = await s3.getObject({
@@ -286,7 +286,7 @@ const layer = new Layer({
 ## Testing
 
 ```typescript
-import { Layer, Dynamodb } from 'use-dynamodb';
+import Dynamodb from 'use-dynamodb';
 
 describe('Layer', () => {
 	let layer: Layer<Item>;
@@ -294,13 +294,13 @@ describe('Layer', () => {
 	const setter = vi.fn();
 
 	beforeAll(async () => {
-		layer = new Layer({
+		layer = new Dynamodb.Layer({
 			db: eventDb,
 			getter,
 			setter,
 			table: 'test-table',
-			getItemPartition: item => item.namespace,
-			getItemUniqueIdentifier: item => item.id
+			getItemPartition: item => item.pk,
+			getItemUniqueIdentifier: item => item.sk
 		});
 	});
 

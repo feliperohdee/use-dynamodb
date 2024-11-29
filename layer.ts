@@ -3,7 +3,16 @@ import _ from 'lodash';
 import type Db from './index';
 import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI } from './index';
 
-type PendingEvent<T extends Dict = Dict> = {
+type LayerMeta = {
+	cursor: string;
+	syncLastTotal: number;
+	syncTimes: number;
+	syncTotal: number;
+};
+
+type LayerGetter<T extends PersistedItem> = (partition: string) => Promise<T[]>;
+type LayerSetter<T extends PersistedItem> = (partition: string, value: T[]) => Promise<void>;
+type LayerPendingEvent<T extends Dict = Dict> = {
 	cursor: string;
 	item: PersistedItem<T>;
 	pk: string;
@@ -12,11 +21,10 @@ type PendingEvent<T extends Dict = Dict> = {
 	type: ChangeType;
 };
 
-type LayerGetter<T extends PersistedItem> = (partition: string) => Promise<T[]>;
-type LayerSetter<T extends PersistedItem> = (partition: string, value: T[]) => Promise<void>;
+const FIVE_DAYS_IN_SECONDS = 5 * 24 * 60 * 60;
 
 class Layer<T extends Dict = Dict> {
-	public db: Db<PendingEvent<T>>;
+	public db: Db<LayerPendingEvent<T>>;
 	public getter: LayerGetter<PersistedItem<T>>;
 	public setter: LayerSetter<PersistedItem<T>>;
 
@@ -24,14 +32,16 @@ class Layer<T extends Dict = Dict> {
 	private getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
 	private getItemPartition: (item: PersistedItem<T>) => string;
 	private table: string;
+	private ttl: (item: PersistedItem<T>) => number;
 
 	constructor(options: {
-		db: Db<PendingEvent<T>>;
+		db: Db<LayerPendingEvent<T>>;
 		getItemPartition?: (item: PersistedItem<T>) => string;
 		getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
 		getter: LayerGetter<PersistedItem<T>>;
 		setter: LayerSetter<PersistedItem<T>>;
 		table: string;
+		ttl?: number | ((item: PersistedItem<T>) => number);
 	}) {
 		this.currentCursor = '';
 		this.db = options.db;
@@ -40,6 +50,14 @@ class Layer<T extends Dict = Dict> {
 		this.getter = options.getter;
 		this.setter = options.setter;
 		this.table = options.table;
+
+		if (_.isFunction(options.ttl)) {
+			this.ttl = options.ttl;
+		} else {
+			this.ttl = () => {
+				return (options.ttl as number) ?? FIVE_DAYS_IN_SECONDS;
+			};
+		}
 
 		if (this.db.schema.partition !== 'pk') {
 			throw new Error('Dynamodb schema partition key must be pk');
@@ -106,7 +124,7 @@ class Layer<T extends Dict = Dict> {
 		return newItems;
 	}
 
-	async mergePendingEvents(pk: string = '', pendingEvents: PendingEvent<T>[]): Promise<PersistedItem<T>[]> {
+	async mergePendingEvents(pk: string = '', pendingEvents: LayerPendingEvent<T>[]): Promise<PersistedItem<T>[]> {
 		const layerItems = await this.getter(pk);
 		const [pendingSet, pendingDelete] = _.partition(pendingEvents, ({ type }) => {
 			return type !== 'DELETE';
@@ -125,8 +143,8 @@ class Layer<T extends Dict = Dict> {
 		};
 
 		if (pendingDeleteItems.size) {
-			return _.filter(newItemsDict, (item, id) => {
-				return !pendingDeleteItems.has(id);
+			return _.filter(newItemsDict, (item, uniqueIdentifier) => {
+				return !pendingDeleteItems.has(uniqueIdentifier);
 			});
 		}
 
@@ -193,12 +211,12 @@ class Layer<T extends Dict = Dict> {
 				throw new Error('Item must have an unique identifier');
 			}
 
-			const pendingItem: PendingEvent<T> = {
+			const pendingItem: LayerPendingEvent<T> = {
 				cursor,
 				item,
 				pk,
 				sk,
-				ttl: Math.floor((now + 5 * 1000 * 60 * 60 * 24) / 1000), // 5 days
+				ttl: Math.floor(now / 1000) + this.ttl(item),
 				type
 			};
 
@@ -214,7 +232,7 @@ class Layer<T extends Dict = Dict> {
 		// update cursor now to ensure we don't miss any changes from now
 		await this.cursor(true);
 
-		const pendingEvents: Record<string, PendingEvent<T>[]> = {};
+		const pendingEvents: Record<string, LayerPendingEvent<T>[]> = {};
 
 		const { count } = await this.db.query({
 			item: { cursor },
@@ -244,5 +262,5 @@ class Layer<T extends Dict = Dict> {
 	}
 }
 
-export { PendingEvent };
+export { LayerPendingEvent };
 export default Layer;

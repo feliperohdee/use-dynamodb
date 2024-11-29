@@ -13,6 +13,7 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🕒 Built-in timestamp management (**createdAt, **updatedAt, \_\_ts)
 - 🔒 Conditional updates and transactions
 - 🎯 Change tracking with callbacks
+- 🔄 Custom retry strategy with exponential backoff
 
 ## 📚 Documentation
 

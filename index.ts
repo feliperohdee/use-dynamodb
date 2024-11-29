@@ -64,16 +64,6 @@ type TableLSI = {
 	sortType: 'S' | 'N';
 };
 
-type ConstructorOptions = {
-	accessKeyId: string;
-	indexes?: (TableGSI | TableLSI)[];
-	onChange?: OnChange;
-	region: string;
-	schema: TableSchema;
-	secretAccessKey: string;
-	table: string;
-};
-
 type FilterOptions<T extends Dict = Dict> = {
 	attributeNames?: Record<string, string>;
 	attributeValues?: Record<string, string | number>;
@@ -168,6 +158,8 @@ const concatUpdateExpression = (exp1: string, exp2: string): string => {
 };
 
 class Dynamodb<T extends Dict = Dict> {
+	public static Layer = Layer;
+
 	public client: DynamoDBDocumentClient;
 	public indexes: (TableGSI | TableLSI)[];
 	public schema: TableSchema;
@@ -175,18 +167,31 @@ class Dynamodb<T extends Dict = Dict> {
 	private onChange: OnChange | null;
 	private table: string;
 
-	constructor(options: ConstructorOptions) {
+	constructor(options: {
+		accessKeyId: string;
+		indexes?: (TableGSI | TableLSI)[];
+		onChange?: OnChange;
+		region: string;
+		retryTimes?: number;
+		retryStrategy?: (attempt: number) => number;
+		schema: TableSchema;
+		secretAccessKey: string;
+		table: string;
+	}) {
 		this.client = DynamoDBDocumentClient.from(
 			new DynamoDBClient({
 				credentials: {
 					accessKeyId: options.accessKeyId,
 					secretAccessKey: options.secretAccessKey
 				},
-				maxAttempts: 4,
 				region: options.region,
-				retryStrategy: new ConfiguredRetryStrategy(4, (attempt: number) => {
-					return 100 + attempt * 1000;
-				})
+				retryStrategy: new ConfiguredRetryStrategy(
+					options.retryTimes ?? 4,
+					options.retryStrategy ??
+						((attempt: number) => {
+							return 100 + attempt * 1000;
+						})
+				)
 			})
 		);
 
@@ -236,11 +241,11 @@ class Dynamodb<T extends Dict = Dict> {
 		return keys;
 	}
 
-	async batchGet(keys: Dict[]): Promise<PersistedItem<T>[]> {
+	async batchGet<R extends Dict = T>(keys: Dict[]): Promise<PersistedItem<R>[]> {
 		keys = _.map(keys, this.getSchemaKeys.bind(this));
 
 		let chunks = _.chunk(keys, 100);
-		let items: PersistedItem<T>[] = [];
+		let items: PersistedItem<R>[] = [];
 
 		for (const chunk of chunks) {
 			const res = await this.client.send(
@@ -254,14 +259,14 @@ class Dynamodb<T extends Dict = Dict> {
 			);
 
 			if (res.Responses) {
-				items = [...items, ...(res.Responses[this.table] as PersistedItem<T>[])];
+				items = [...items, ...(res.Responses[this.table] as PersistedItem<R>[])];
 			}
 		}
 
 		return items;
 	}
 
-	async batchWrite(items: Dict[], ts: number = _.now()): Promise<PersistedItem<T>[]> {
+	async batchWrite<R extends Dict = T>(items: Dict[], ts: number = _.now()): Promise<PersistedItem<R>[]> {
 		const nowISO = new Date(ts).toISOString();
 		const persistedItems = _.map(items, item => {
 			return {
@@ -270,7 +275,7 @@ class Dynamodb<T extends Dict = Dict> {
 				__ts: ts,
 				__updatedAt: nowISO
 			};
-		}) as PersistedItem<T>[];
+		}) as PersistedItem<R>[];
 
 		const chunks = _.chunk(persistedItems, 25);
 
@@ -297,7 +302,7 @@ class Dynamodb<T extends Dict = Dict> {
 						sort: this.schema.sort ? item[this.schema.sort] : null,
 						table: this.table,
 						type: 'PUT'
-					} as ChangeEvent<T>;
+					} as ChangeEvent<R>;
 				})
 			);
 		}
@@ -328,12 +333,12 @@ class Dynamodb<T extends Dict = Dict> {
 		return { count };
 	}
 
-	async delete(options: {
+	async delete<R extends Dict = T>(options: {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, string | number>;
 		conditionExpression?: string;
 		filter: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
-	}): Promise<PersistedItem<T> | null> {
+	}): Promise<PersistedItem<R> | null> {
 		const currentItem = await this.get(options.filter);
 
 		if (!currentItem) {
@@ -357,7 +362,7 @@ class Dynamodb<T extends Dict = Dict> {
 			})
 		);
 
-		const deletedItem = (res.Attributes as PersistedItem<T>) || null;
+		const deletedItem = (res.Attributes as PersistedItem<R>) || null;
 
 		if (deletedItem) {
 			await this.notifyChanges([
@@ -374,10 +379,10 @@ class Dynamodb<T extends Dict = Dict> {
 		return deletedItem;
 	}
 
-	async deleteMany(
+	async deleteMany<R extends Dict = T>(
 		options: Omit<FilterOptions, 'chunkLimit' | 'consitentRead' | 'limit' | 'onChunk' | 'startKey'>
-	): Promise<PersistedItem<T>[]> {
-		const { items } = await this.filter({
+	): Promise<PersistedItem<R>[]> {
+		const { items } = await this.filter<R>({
 			...options,
 			consistentRead: true,
 			limit: Infinity,
@@ -390,8 +395,8 @@ class Dynamodb<T extends Dict = Dict> {
 		return items;
 	}
 
-	async filter(options: FilterOptions<T>): Promise<MultiResponse<T>> {
-		let res: MultiResponse<T> = {
+	async filter<R extends Dict = T>(options: FilterOptions<R>): Promise<MultiResponse<R>> {
+		let res: MultiResponse<R> = {
 			count: 0,
 			items: [],
 			lastEvaluatedKey: null
@@ -402,17 +407,17 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		if (options.item) {
-			res = await this.query({
+			res = await this.query<R>({
 				...options,
 				item: options.item
 			});
 		} else if (options.queryExpression) {
-			res = await this.query({
+			res = await this.query<R>({
 				...options,
 				queryExpression: options.queryExpression
 			});
 		} else if (options.filterExpression) {
-			res = await this.scan({
+			res = await this.scan<R>({
 				...options,
 				filterExpression: options.filterExpression
 			});
@@ -421,8 +426,10 @@ class Dynamodb<T extends Dict = Dict> {
 		return res;
 	}
 
-	async get(options: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>): Promise<PersistedItem<T> | null> {
-		const { items } = await this.filter({
+	async get<R extends Dict = T>(
+		options: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>
+	): Promise<PersistedItem<R> | null> {
+		const { items } = await this.filter<R>({
 			...options,
 			onChunk: () => {},
 			limit: 1,
@@ -469,7 +476,7 @@ class Dynamodb<T extends Dict = Dict> {
 		await this.onChange(events);
 	}
 
-	async put(
+	async put<R extends Dict = T>(
 		item: Dict,
 		options?: {
 			attributeNames?: Record<string, string>;
@@ -478,7 +485,7 @@ class Dynamodb<T extends Dict = Dict> {
 			overwrite?: boolean;
 		},
 		ts: number = _.now()
-	): Promise<PersistedItem<T>> {
+	): Promise<PersistedItem<R>> {
 		options = options || {};
 
 		let conditionExpression = '';
@@ -501,7 +508,7 @@ class Dynamodb<T extends Dict = Dict> {
 			__createdAt: item.__createdAt ?? nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
-		} as PersistedItem<T>;
+		} as PersistedItem<R>;
 
 		const putCommandInput: PutCommandInput = {
 			Item: persistedItem,
@@ -534,7 +541,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return persistedItem;
 	}
 
-	async query(options: {
+	async query<R extends Dict = T>(options: {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, string | number>;
 		chunkLimit?: number;
@@ -543,12 +550,12 @@ class Dynamodb<T extends Dict = Dict> {
 		index?: string;
 		item?: Dict;
 		limit?: number;
-		onChunk?: ({ count, items }: { count: number; items: PersistedItem<T>[] }) => Promise<void> | void;
+		onChunk?: ({ count, items }: { count: number; items: PersistedItem<R>[] }) => Promise<void> | void;
 		prefix?: boolean;
 		queryExpression?: string;
 		select?: string[];
 		startKey?: Dict | null;
-	}): Promise<MultiResponse<T>> {
+	}): Promise<MultiResponse<R>> {
 		if (!options.item && !options.queryExpression) {
 			throw new Error('Must provide either item or queryExpression');
 		}
@@ -657,7 +664,7 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		let res = await this.client.send(new QueryCommand(queryCommandInput));
-		let items = (res.Items || []) as PersistedItem<T>[];
+		let items = (res.Items || []) as PersistedItem<R>[];
 		let count = _.size(items);
 		let evaluateLimit = queryCommandInput.Limit ?? Infinity;
 
@@ -680,12 +687,12 @@ class Dynamodb<T extends Dict = Dict> {
 			if (_.isFunction(options.onChunk)) {
 				await options.onChunk({
 					count: _.size(res.Items),
-					items: (res.Items || []) as PersistedItem<T>[]
+					items: (res.Items || []) as PersistedItem<R>[]
 				});
 			}
 
 			if (res.Items) {
-				items = [...items, ...(res.Items as PersistedItem<T>[])];
+				items = [...items, ...(res.Items as PersistedItem<R>[])];
 				count = _.size(items);
 			}
 		}
@@ -700,7 +707,7 @@ class Dynamodb<T extends Dict = Dict> {
 		};
 	}
 
-	async replace(
+	async replace<R extends Dict = T>(
 		item: Dict,
 		replacedItem: PersistedItem,
 		options?: {
@@ -710,7 +717,7 @@ class Dynamodb<T extends Dict = Dict> {
 			overwrite?: boolean;
 		},
 		ts: number = _.now()
-	): Promise<PersistedItem<T>> {
+	): Promise<PersistedItem<R>> {
 		options = options || {};
 
 		const nowISO = new Date(ts).toISOString();
@@ -719,7 +726,7 @@ class Dynamodb<T extends Dict = Dict> {
 			__createdAt: replacedItem.__createdAt ?? nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
-		} as PersistedItem<T>;
+		} as PersistedItem<R>;
 
 		const deleteCommandInput: DeleteCommandInput = {
 			ConditionExpression: '#__ts = :__ts',
@@ -835,7 +842,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return { index: '', schema: { partition: '', sort: '' } };
 	}
 
-	async scan(options?: {
+	async scan<R extends Dict = T>(options?: {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, string | number>;
 		chunkLimit?: number;
@@ -843,10 +850,10 @@ class Dynamodb<T extends Dict = Dict> {
 		filterExpression?: string;
 		index?: string;
 		limit?: number;
-		onChunk?: ({ count, items }: { count: number; items: PersistedItem<T>[] }) => Promise<void> | void;
+		onChunk?: ({ count, items }: { count: number; items: PersistedItem<R>[] }) => Promise<void> | void;
 		select?: string[];
 		startKey?: Dict | null;
-	}): Promise<MultiResponse<T>> {
+	}): Promise<MultiResponse<R>> {
 		options = _.defaults({}, options, {
 			chunkLimit: Infinity,
 			limit: 100
@@ -903,7 +910,7 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		let res = await this.client.send(new ScanCommand(scanCommandInput));
-		let items = (res.Items || []) as PersistedItem<T>[];
+		let items = (res.Items || []) as PersistedItem<R>[];
 		let count = _.size(items);
 		let evaluateLimit = scanCommandInput.Limit ?? Infinity;
 
@@ -926,12 +933,12 @@ class Dynamodb<T extends Dict = Dict> {
 			if (_.isFunction(options.onChunk)) {
 				await options.onChunk({
 					count: _.size(res.Items),
-					items: (res.Items || []) as PersistedItem<T>[]
+					items: (res.Items || []) as PersistedItem<R>[]
 				});
 			}
 
 			if (res.Items) {
-				items = [...items, ...(res.Items as PersistedItem<T>[])];
+				items = [...items, ...(res.Items as PersistedItem<R>[])];
 				count = _.size(items);
 			}
 		}
@@ -966,7 +973,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return output;
 	}
 
-	async update(
+	async update<R extends Dict = T>(
 		options: {
 			allowUpdatePartitionAndSort?: boolean;
 			attributeNames?: Record<string, string>;
@@ -974,11 +981,11 @@ class Dynamodb<T extends Dict = Dict> {
 			conditionExpression?: string;
 			filter: Omit<FilterOptions, 'limit' | 'onChunk' | 'startKey'>;
 			updateExpression?: string;
-			updateFunction?: (item: PersistedItem<T> | Dict, exists: boolean) => Dict;
+			updateFunction?: (item: PersistedItem<R> | Dict, exists: boolean) => Dict;
 			upsert?: boolean;
 		},
 		ts: number = _.now()
-	): Promise<PersistedItem<T>> {
+	): Promise<PersistedItem<R>> {
 		const currentItem = await this.get(options.filter);
 
 		if (!currentItem && !options.upsert) {
@@ -1047,7 +1054,7 @@ class Dynamodb<T extends Dict = Dict> {
 				})
 			);
 
-			const updatedItem = res.Attributes as PersistedItem<T>;
+			const updatedItem = res.Attributes as PersistedItem<R>;
 
 			await this.notifyChanges([
 				{
@@ -1232,6 +1239,6 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export { ChangeEvent, ChangeType, Dict, Dynamodb, PersistedItem, Layer, TableGSI, TableLSI };
+export { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI, TableLSI };
 export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;

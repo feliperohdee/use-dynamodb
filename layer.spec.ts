@@ -2,16 +2,16 @@ import _ from 'lodash';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Db, { ChangeEvent, ChangeType, PersistedItem } from './index';
-import Layer, { PendingEvent } from './layer';
+import Layer, { LayerPendingEvent } from './layer';
 
 type Item = {
-	id: string;
-	namespace: string;
+	pk: string;
+	sk: string;
 	state: string;
 };
 
-const createItem = (options: { index: number; namespace?: number; state?: 'layer' | 'pending'; ts?: number }): PersistedItem<Item> => {
-	const { index, namespace = 0, state = 'pending', ts = _.now() } = options;
+const createItem = (options: { index: number; pk?: number; state?: 'layer' | 'pending'; ts?: number }): PersistedItem<Item> => {
+	const { index, pk = 0, state = 'pending', ts = _.now() } = options;
 	const nowISO = new Date(ts).toISOString();
 	const indexString = _.padStart(`${index}`, 3, '0');
 
@@ -19,8 +19,8 @@ const createItem = (options: { index: number; namespace?: number; state?: 'layer
 		__createdAt: nowISO,
 		__ts: ts,
 		__updatedAt: nowISO,
-		id: `id-${indexString}`,
-		namespace: `namespace-${namespace}`,
+		pk: `pk-${pk}`,
+		sk: `sk-${indexString}`,
 		state: `${state}-${indexString}`
 	};
 };
@@ -28,28 +28,28 @@ const createItem = (options: { index: number; namespace?: number; state?: 'layer
 const createChangeEvents = (options: {
 	count: number;
 	initialIndex?: number;
-	namespace?: number;
+	pk?: number;
 	state?: 'layer' | 'pending';
 	table?: string;
 	ts?: number;
 	type?: ChangeType;
 }): ChangeEvent<Item>[] => {
 	return _.times(options.count, index => {
-		const { initialIndex = 0, namespace = 0, state = 'pending', table = 'table-1', ts = _.now(), type = 'PUT' } = options || {};
+		const { initialIndex = 0, pk = 0, state = 'pending', table = 'table-1', ts = _.now(), type = 'PUT' } = options || {};
 
 		index += initialIndex;
 
 		const item = createItem({
 			index,
-			namespace,
+			pk,
 			state,
 			ts
 		});
 
 		const event: ChangeEvent<Item> = {
 			item,
-			partition: item.namespace,
-			sort: item.id,
+			partition: item.pk,
+			sort: item.sk,
 			table,
 			type
 		};
@@ -59,7 +59,7 @@ const createChangeEvents = (options: {
 };
 
 const factory = async ({ createTable = false, getter, setter }: { createTable?: boolean; getter: Mock; setter: Mock }) => {
-	const db = new Db<PendingEvent<Item>>({
+	const db = new Db<LayerPendingEvent<Item>>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
 		indexes: [
 			{
@@ -83,10 +83,10 @@ const factory = async ({ createTable = false, getter, setter }: { createTable?: 
 	return new Layer({
 		db,
 		getItemPartition: item => {
-			return item.namespace || ('pk' in item ? (item.pk as string) : '');
+			return item.pk;
 		},
 		getItemUniqueIdentifier: item => {
-			return item.id;
+			return item.sk;
 		},
 		getter,
 		setter,
@@ -165,7 +165,7 @@ describe('/layer.ts', () => {
 
 		beforeEach(async () => {
 			vi.mocked(layer.getter).mockImplementation(async (partition: string) => {
-				if (_.startsWith(partition, 'table-1#namespace-0')) {
+				if (_.startsWith(partition, 'table-1#pk-0')) {
 					return _.times(12, index => {
 						return createItem({
 							index,
@@ -183,77 +183,77 @@ describe('/layer.ts', () => {
 		});
 
 		it('should returns', async () => {
-			const res = await layer.get('namespace-0');
+			const res = await layer.get('pk-0');
 
 			expect(layer.cursor).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#namespace-0#__INITIAL__', expect.any(Array));
+			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-0#__INITIAL__', expect.any(Array));
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					pk: 'table-1#namespace-0#__INITIAL__'
+					pk: 'table-1#pk-0#__INITIAL__'
 				},
 				limit: Infinity
 			});
 
 			expect(res).toEqual([
 				expect.objectContaining({
-					id: 'id-000',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-000',
 					state: 'pending-000'
 				}),
 				expect.objectContaining({
-					id: 'id-001',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-001',
 					state: 'pending-001'
 				}),
 				// ** DELETED **
 				// expect.objectContaining({
-				// 	id: 'id-002',
-				// 	namespace: 'namespace-0',
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-002',
 				// 	state: 'pending-002'
 				// }),
 				// expect.objectContaining({
-				// 	id: 'id-003',
-				// 	namespace: 'namespace-0',
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-003',
 				// 	state: 'pending-003'
 				// }),
 				expect.objectContaining({
-					id: 'id-004',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-004',
 					state: 'pending-004'
 				}),
 				expect.objectContaining({
-					id: 'id-005',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-005',
 					state: 'pending-005'
 				}),
 				expect.objectContaining({
-					id: 'id-006',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-006',
 					state: 'pending-006'
 				}),
 				expect.objectContaining({
-					id: 'id-007',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-007',
 					state: 'pending-007'
 				}),
 				expect.objectContaining({
-					id: 'id-008',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-008',
 					state: 'pending-008'
 				}),
 				expect.objectContaining({
-					id: 'id-009',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-009',
 					state: 'pending-009'
 				}),
 				expect.objectContaining({
-					id: 'id-010',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-010',
 					state: 'layer-010'
 				}),
 				expect.objectContaining({
-					id: 'id-011',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-011',
 					state: 'layer-011'
 				})
 			]);
@@ -262,87 +262,87 @@ describe('/layer.ts', () => {
 		it('should returns on cursor', async () => {
 			vi.mocked(layer.cursor).mockResolvedValue('2024-11-28T01:00:00.000Z');
 
-			const res = await layer.get('namespace-0');
+			const res = await layer.get('pk-0');
 
 			expect(layer.cursor).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#namespace-0#2024-11-28T01:00:00.000Z', expect.any(Array));
+			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-0#2024-11-28T01:00:00.000Z', expect.any(Array));
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					pk: 'table-1#namespace-0#2024-11-28T01:00:00.000Z'
+					pk: 'table-1#pk-0#2024-11-28T01:00:00.000Z'
 				},
 				limit: Infinity
 			});
 
 			expect(res).toEqual([
 				expect.objectContaining({
-					id: 'id-000',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-000',
 					state: 'layer-000'
 				}),
 				expect.objectContaining({
-					id: 'id-001',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-001',
 					state: 'layer-001'
 				}),
 				// ** DELETED **
 				// expect.objectContaining({
-				// 	id: 'id-002',
-				// 	namespace: 'namespace-0',
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-002',
 				// 	state: 'layer-002'
 				// }),
 				// expect.objectContaining({
-				// 	id: 'id-003',
-				// 	namespace: 'namespace-0',
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-003',
 				// 	state: 'layer-003'
 				// }),
 				expect.objectContaining({
-					id: 'id-004',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-004',
 					state: 'layer-004'
 				}),
 				expect.objectContaining({
-					id: 'id-005',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-005',
 					state: 'layer-005'
 				}),
 				expect.objectContaining({
-					id: 'id-006',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-006',
 					state: 'layer-006'
 				}),
 				expect.objectContaining({
-					id: 'id-007',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-007',
 					state: 'layer-007'
 				}),
 				expect.objectContaining({
-					id: 'id-008',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-008',
 					state: 'pending-008'
 				}),
 				expect.objectContaining({
-					id: 'id-009',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-009',
 					state: 'pending-009'
 				}),
 				expect.objectContaining({
-					id: 'id-010',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-010',
 					state: 'layer-010'
 				}),
 				expect.objectContaining({
-					id: 'id-011',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-011',
 					state: 'layer-011'
 				})
 			]);
 		});
 
 		it('should returns empty if no partition', async () => {
-			const res = await layer.get('namespace-1');
+			const res = await layer.get('pk-1');
 
 			expect(layer.cursor).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#namespace-1#__INITIAL__', expect.any(Array));
+			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-1#__INITIAL__', expect.any(Array));
 			expect(res).toEqual([]);
 		});
 
@@ -358,7 +358,7 @@ describe('/layer.ts', () => {
 	describe('mergePendingEvents', () => {
 		beforeEach(async () => {
 			vi.mocked(layer.getter).mockImplementation(async (partition: string) => {
-				if (partition === 'table-1#namespace-0') {
+				if (partition === 'table-1#pk-0') {
 					return _.times(12, index => {
 						return createItem({
 							index,
@@ -372,18 +372,18 @@ describe('/layer.ts', () => {
 		});
 
 		it('should merge pending items', async () => {
-			const pk = 'table-1#namespace-0';
+			const pk = 'table-1#pk-0';
 			const pendingEvents = _.times(5, index => {
 				const item = createItem({
 					index: 10 + index,
 					state: 'pending'
 				});
 
-				const pendingEvent: PendingEvent<Item> = {
+				const pendingEvent: LayerPendingEvent<Item> = {
 					cursor: '__INITIAL__',
 					item,
 					pk,
-					sk: item.id,
+					sk: item.sk,
 					type: 'PUT',
 					ttl: _.now()
 				};
@@ -428,18 +428,18 @@ describe('/layer.ts', () => {
 		});
 
 		it('should handle DELETE type correctly', async () => {
-			const pk = 'table-1#namespace-0';
+			const pk = 'table-1#pk-0';
 			const pendingEvents = _.times(5, index => {
 				const item = createItem({
 					index: 10 + index,
 					state: 'pending'
 				});
 
-				const pendingEvent: PendingEvent<Item> = {
+				const pendingEvent: LayerPendingEvent<Item> = {
 					cursor: '__INITIAL__',
 					item,
 					pk,
-					sk: item.id,
+					sk: item.sk,
 					type: 'DELETE',
 					ttl: _.now()
 				};
@@ -495,8 +495,8 @@ describe('/layer.ts', () => {
 			await db.batchWrite(
 				_.times(10, i => {
 					return {
-						sk: `id-${i}`,
-						pk: `namespace-${i % 2}`,
+						pk: `pk-${i % 2}`,
+						sk: `sk-${i}`,
 						state: `db-${i}`
 					};
 				})
@@ -514,18 +514,18 @@ describe('/layer.ts', () => {
 			vi.spyOn(layer.db, 'query');
 
 			await Promise.all([
-				// namespace 0
+				// pk 0
 				layer.set(
 					createChangeEvents({
 						count: 2
 					}),
 					'__INITIAL__'
 				),
-				// namespace 1
+				// pk 1
 				layer.set(
 					createChangeEvents({
 						count: 2,
-						namespace: 1
+						pk: 1
 					}),
 					'__INITIAL__'
 				)
@@ -533,12 +533,12 @@ describe('/layer.ts', () => {
 		});
 
 		it('must reset', async () => {
-			await layer.reset(db, 'namespace-0');
+			await layer.reset(db, 'pk-0');
 
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
 					cursor: '__INITIAL__',
-					pk: 'table-1#namespace-0#__INITIAL__'
+					pk: 'table-1#pk-0#__INITIAL__'
 				},
 				limit: Infinity,
 				onChunk: expect.any(Function)
@@ -548,12 +548,12 @@ describe('/layer.ts', () => {
 			expect(layer.db.batchDelete).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-000'
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-001'
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-001'
 					})
 				])
 			);
@@ -576,7 +576,7 @@ describe('/layer.ts', () => {
 				});
 
 			expect(layer.setter).toHaveBeenCalledOnce();
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-0', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(['db-0', 'db-2', 'db-4', 'db-6', 'db-8']);
 		});
@@ -599,20 +599,20 @@ describe('/layer.ts', () => {
 			expect(layer.db.batchDelete).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-000'
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-001'
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-001'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#namespace-1#__INITIAL__',
-						sk: 'id-000'
+						pk: 'table-1#pk-1#__INITIAL__',
+						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#namespace-1#__INITIAL__',
-						sk: 'id-001'
+						pk: 'table-1#pk-1#__INITIAL__',
+						sk: 'sk-001'
 					})
 				])
 			);
@@ -630,8 +630,8 @@ describe('/layer.ts', () => {
 				});
 
 			expect(layer.setter).toHaveBeenCalledTimes(2);
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-0', expect.any(Array));
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-1', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-1', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(['db-0', 'db-2', 'db-4', 'db-6', 'db-8']);
 			expect(_.map(setterArgs[1].items, 'state')).toEqual(['db-1', 'db-3', 'db-5', 'db-7', 'db-9']);
@@ -640,10 +640,10 @@ describe('/layer.ts', () => {
 
 	describe('resolvePartition', () => {
 		it('should resolve partition with table and partition', () => {
-			const partition = 'namespace-0';
+			const partition = 'pk-0';
 			const resolvedPartition = layer.resolvePartition('__INITIAL__', partition);
 
-			expect(resolvedPartition).toEqual('table-1#namespace-0#__INITIAL__');
+			expect(resolvedPartition).toEqual('table-1#pk-0#__INITIAL__');
 		});
 
 		it('should resolve partition with only table', () => {
@@ -680,36 +680,36 @@ describe('/layer.ts', () => {
 					expect.objectContaining({
 						cursor: '__INITIAL__',
 						item: expect.objectContaining({
-							id: 'id-000',
-							namespace: 'namespace-0',
+							pk: 'pk-0',
+							sk: 'sk-000',
 							state: 'pending-000'
 						}),
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-000',
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-000',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
 						cursor: '__INITIAL__',
 						item: expect.objectContaining({
-							id: 'id-001',
-							namespace: 'namespace-0',
+							pk: 'pk-0',
+							sk: 'sk-001',
 							state: 'pending-001'
 						}),
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-001',
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-001',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
 						cursor: '__INITIAL__',
 						item: expect.objectContaining({
-							id: 'id-002',
-							namespace: 'namespace-0',
+							pk: 'pk-0',
+							sk: 'sk-002',
 							state: 'pending-002'
 						}),
-						pk: 'table-1#namespace-0#__INITIAL__',
-						sk: 'id-002',
+						pk: 'table-1#pk-0#__INITIAL__',
+						sk: 'sk-002',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					})
@@ -721,11 +721,11 @@ describe('/layer.ts', () => {
 			try {
 				const events = createChangeEvents({
 					count: 1,
-					namespace: 1,
+					pk: 1,
 					state: 'pending'
 				});
 
-				events[0].item.id = '';
+				events[0].item.sk = '';
 				await layer.set(events);
 
 				throw new Error('expected to throw');
@@ -738,7 +738,7 @@ describe('/layer.ts', () => {
 	describe('sync', () => {
 		beforeAll(async () => {
 			await Promise.all([
-				// namespace 0
+				// pk 0
 				layer.set(
 					createChangeEvents({
 						count: 4,
@@ -760,11 +760,11 @@ describe('/layer.ts', () => {
 					}),
 					'2024-11-28T02:00:00.000Z'
 				),
-				// namespace 1 (empty layer)
+				// pk 1 (empty layer)
 				layer.set(
 					createChangeEvents({
 						count: 4,
-						namespace: 1,
+						pk: 1,
 						type: 'PUT'
 					}),
 					'__INITIAL__'
@@ -772,7 +772,7 @@ describe('/layer.ts', () => {
 				layer.set(
 					createChangeEvents({
 						count: 2,
-						namespace: 1,
+						pk: 1,
 						type: 'DELETE'
 					}),
 					'2024-11-28T01:00:00.000Z'
@@ -790,7 +790,7 @@ describe('/layer.ts', () => {
 			vi.spyOn(layer, 'setter');
 
 			vi.mocked(layer.getter).mockImplementation(async (partition: string) => {
-				if (_.startsWith(partition, 'table-1#namespace-0')) {
+				if (_.startsWith(partition, 'table-1#pk-0')) {
 					return _.times(8, index => {
 						return createItem({
 							index,
@@ -829,8 +829,8 @@ describe('/layer.ts', () => {
 				});
 
 			expect(layer.setter).toHaveBeenCalledTimes(2);
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-0', expect.any(Array));
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-1', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-1', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(
 				expect.arrayContaining([
@@ -882,8 +882,8 @@ describe('/layer.ts', () => {
 				});
 
 			expect(layer.setter).toHaveBeenCalledTimes(2);
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-0', expect.any(Array));
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-1', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-1', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(expect.arrayContaining(['layer-004', 'layer-005', 'layer-006', 'layer-007']));
 
@@ -922,7 +922,7 @@ describe('/layer.ts', () => {
 				});
 
 			expect(layer.setter).toHaveBeenCalledTimes(1);
-			expect(layer.setter).toHaveBeenCalledWith('table-1#namespace-0', expect.any(Array));
+			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(
 				expect.arrayContaining([
@@ -1034,23 +1034,23 @@ describe('/layer.ts (without partition)', () => {
 
 			expect(res).toEqual([
 				expect.objectContaining({
-					id: 'id-000',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-000',
 					state: 'pending-000'
 				}),
 				expect.objectContaining({
-					id: 'id-001',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-001',
 					state: 'pending-001'
 				}),
 				expect.objectContaining({
-					id: 'id-004',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-004',
 					state: 'layer-004'
 				}),
 				expect.objectContaining({
-					id: 'id-005',
-					namespace: 'namespace-0',
+					pk: 'pk-0',
+					sk: 'sk-005',
 					state: 'layer-005'
 				})
 			]);
@@ -1078,36 +1078,36 @@ describe('/layer.ts (without partition)', () => {
 					expect.objectContaining({
 						cursor: '__INITIAL__',
 						item: expect.objectContaining({
-							id: 'id-000',
-							namespace: 'namespace-0',
+							pk: 'pk-0',
+							sk: 'sk-000',
 							state: 'pending-000'
 						}),
 						pk: 'table-1#__INITIAL__',
-						sk: 'id-000',
+						sk: 'sk-000',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
 						cursor: '__INITIAL__',
 						item: expect.objectContaining({
-							id: 'id-001',
-							namespace: 'namespace-0',
+							pk: 'pk-0',
+							sk: 'sk-001',
 							state: 'pending-001'
 						}),
 						pk: 'table-1#__INITIAL__',
-						sk: 'id-001',
+						sk: 'sk-001',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
 						cursor: '__INITIAL__',
 						item: expect.objectContaining({
-							id: 'id-002',
-							namespace: 'namespace-0',
+							pk: 'pk-0',
+							sk: 'sk-002',
 							state: 'pending-002'
 						}),
 						pk: 'table-1#__INITIAL__',
-						sk: 'id-002',
+						sk: 'sk-002',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					})
@@ -1132,8 +1132,8 @@ describe('/layer.ts (without partition)', () => {
 			await db.batchWrite(
 				_.times(5, i => {
 					return {
-						sk: `id-${i}`,
-						pk: `namespace-${i % 2}`,
+						pk: `pk-${i % 2}`,
+						sk: `sk-${i}`,
 						state: `db-${i}`
 					};
 				})
@@ -1151,7 +1151,7 @@ describe('/layer.ts (without partition)', () => {
 			vi.spyOn(layer.db, 'query');
 
 			await Promise.all([
-				// namespace 0
+				// pk 0
 				layer.set(
 					createChangeEvents({
 						count: 2
@@ -1177,11 +1177,11 @@ describe('/layer.ts (without partition)', () => {
 				expect.arrayContaining([
 					expect.objectContaining({
 						pk: 'table-1#__INITIAL__',
-						sk: 'id-000'
+						sk: 'sk-000'
 					}),
 					expect.objectContaining({
 						pk: 'table-1#__INITIAL__',
-						sk: 'id-001'
+						sk: 'sk-001'
 					})
 				])
 			);
