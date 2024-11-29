@@ -1,7 +1,7 @@
 import _ from 'lodash';
 
-import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI, TableLSI } from './index';
 import type Db from './index';
+import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI } from './index';
 
 type PendingEvent<T extends Dict = Dict> = {
 	cursor: string;

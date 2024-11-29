@@ -29,6 +29,8 @@ import {
 	LocalSecondaryIndex
 } from '@aws-sdk/client-dynamodb';
 
+import Layer from './layer';
+
 type Dict = Record<string, any>;
 type PersistedItem<T extends Dict = Dict> = T & {
 	__createdAt: string;
@@ -1230,6 +1232,6 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI, TableLSI };
+export { ChangeEvent, ChangeType, Dict, Dynamodb, PersistedItem, Layer, TableGSI, TableLSI };
 export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;
