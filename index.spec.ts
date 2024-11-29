@@ -1,7 +1,7 @@
 import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
-import Db, { concatConditionExpression, concatUpdateExpression } from './index';
+import Db from './index';
 
 type Item = {
 	foo: string;
@@ -65,22 +65,6 @@ describe('/index.ts', () => {
 	beforeEach(() => {
 		onChangeMock = vi.fn();
 		db = factory({ onChange: onChangeMock });
-	});
-
-	describe('concatConditionExpression', () => {
-		it('should works', () => {
-			expect(concatConditionExpression('a  ', '  b')).toEqual('a AND b');
-			expect(concatConditionExpression('a  ', '  OR b')).toEqual('a OR b');
-		});
-	});
-
-	describe('concatUpdateExpression', () => {
-		it('should works', () => {
-			expect(concatUpdateExpression('#a = :a,', '')).toEqual('SET #a = :a');
-			expect(concatUpdateExpression('#a = :a,', 'b = :b')).toEqual('SET #a = :a, b = :b');
-			expect(concatUpdateExpression('SET #a = :a,', 'SET b = :b,c = :c,')).toEqual('SET #a = :a, b = :b, c = :c');
-			expect(concatUpdateExpression('SET #a = :a,', 'ADD d SET b = :b,c = :c,')).toEqual('SET #a = :a, b = :b, c = :c ADD d');
-		});
 	});
 
 	describe('createTable', () => {
@@ -1756,7 +1740,7 @@ describe('/index.ts', () => {
 			}
 		});
 
-		it('should update', async () => {
+		it('should update with updateFunction', async () => {
 			await db.batchWrite(createItems(1));
 
 			const item = await db.update({
@@ -1789,7 +1773,7 @@ describe('/index.ts', () => {
 						'#__ts': '__ts'
 					},
 					attributeValues: { ':__curr_ts': expect.any(Number) },
-					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__curr_ts))',
+					conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
 					overwrite: true
 				}
 			);
@@ -1809,7 +1793,7 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
-		it('should update with updateFunction', async () => {
+		it('should update without updateFunction', async () => {
 			await db.batchWrite(createItems(1));
 
 			const item = await db.update({
@@ -1836,7 +1820,7 @@ describe('/index.ts', () => {
 						'#__ts': '__ts'
 					},
 					attributeValues: { ':__curr_ts': expect.any(Number) },
-					conditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__curr_ts))',
+					conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
 					overwrite: true
 				}
 			);
@@ -1878,7 +1862,7 @@ describe('/index.ts', () => {
 			}
 		});
 
-		it('should upsert', async () => {
+		it('should upsert with updateFunction', async () => {
 			const item = await db.update({
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-0' }
@@ -1950,7 +1934,7 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
-		it('should update with expression', async () => {
+		it('should update with updateExpression', async () => {
 			await db.batchWrite(createItems(1));
 
 			const item = await db.update({
@@ -1965,7 +1949,7 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__pk) AND (attribute_not_exists(#__ts) OR #__ts = :__curr_ts))',
+						ConditionExpression: 'attribute_exists(#__pk)',
 						ExpressionAttributeNames: {
 							'#__cr': '__createdAt',
 							'#__pk': 'pk',
@@ -1978,7 +1962,6 @@ describe('/index.ts', () => {
 							':foo': 'foo-1',
 							':one': 1,
 							':__cr': expect.any(String),
-							':__curr_ts': expect.any(Number),
 							':__ts': expect.any(Number),
 							':__up': expect.any(String)
 						},
@@ -2010,7 +1993,7 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
-		it('should upsert with expression', async () => {
+		it('should upsert with updateExpression', async () => {
 			const item = await db.update({
 				attributeNames: { '#foo': 'foo', '#bar': 'bar' },
 				attributeValues: { ':foo': 'foo-1', ':one': 1 },
@@ -2024,7 +2007,6 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
 						ExpressionAttributeNames: {
 							'#bar': 'bar',
 							'#foo': 'foo',
@@ -2036,7 +2018,6 @@ describe('/index.ts', () => {
 							':foo': 'foo-1',
 							':one': 1,
 							':__cr': expect.any(String),
-							':__curr_ts': expect.any(Number),
 							':__ts': expect.any(Number),
 							':__up': expect.any(String)
 						},

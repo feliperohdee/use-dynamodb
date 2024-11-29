@@ -7,9 +7,11 @@ The Layer module provides event sourcing and caching capabilities for DynamoDB, 
 - 🔄 Event-driven change tracking
 - 📝 Maintains modification history with cursors
 - 🔄 Eventual consistency with external storage
-- 🗃️ Partition-based partitioning
+- 🗃️ Partition-based organization
 - ⏱️ TTL support for events
 - 🔍 Query support for both current and historical state
+- 🔄 Background sync support
+- 📊 Comprehensive sync metrics
 
 ## Installation
 
@@ -27,13 +29,13 @@ yarn add use-dynamodb
 import Dynamodb from 'use-dynamodb';
 
 type Item = {
-	ps: string;
+	pk: string;
 	sk: string;
 	state: string;
 };
 
 // First, create a DynamoDB instance for the events table
-const eventDb = new Dynamodb<PendingEvent<Item>>({
+const eventDb = new Dynamodb<LayerPendingEvent<Item>>({
 	accessKeyId: 'YOUR_ACCESS_KEY',
 	secretAccessKey: 'YOUR_SECRET_KEY',
 	region: 'us-east-1',
@@ -54,6 +56,10 @@ const eventDb = new Dynamodb<PendingEvent<Item>>({
 const layer = new Dynamodb.Layer({
 	db: eventDb,
 	table: 'source-table',
+	// Optional background runner for sync operations
+	backgroundRunner: promise => {
+		// Handle background sync
+	},
 	// Function to get partition key from item
 	getItemPartition: item => item.pk,
 	// Function to get unique identifier from item
@@ -66,6 +72,11 @@ const layer = new Dynamodb.Layer({
 	// Function to set current state in storage
 	setter: async (partition, items) => {
 		// Implement saving to your storage (e.g., S3)
+	},
+	// Optional sync strategy
+	syncStrategy: (meta: LayerMeta) => {
+		// Return true to trigger sync
+		return meta.unsyncedTotal > 100;
 	}
 });
 ```
@@ -78,11 +89,11 @@ await layer.set([
 	{
 		item: {
 			pk: 'users',
-			sk: 'item-1',
+			sk: 'user-1',
 			state: 'active'
 		},
 		partition: 'users',
-		sort: 'item-1',
+		sort: 'user-1',
 		table: 'source-table',
 		type: 'PUT'
 	}
@@ -92,12 +103,12 @@ await layer.set([
 await layer.set([
 	{
 		item: {
-			partition: 'users',
-			sk: 'item-1',
+			pk: 'users',
+			sk: 'user-1',
 			state: 'active'
 		},
 		partition: 'users',
-		sort: 'item-1',
+		sort: 'user-1',
 		table: 'source-table',
 		type: 'DELETE'
 	}
@@ -112,11 +123,29 @@ const items = await layer.get('users');
 
 // Get all items (if not using partitions)
 const allItems = await layer.get();
+
+// Get items with custom sorting
+const sortedItems = await layer.get('users', true); // true enables sorting by unique identifier and timestamp
 ```
 
-### Sync with Storage
+### Sync and Metrics
 
 ```typescript
+// Get sync metrics
+const meta = await layer.meta();
+console.log(meta);
+/*
+{
+  cursor: string;           // Current cursor position
+  loaded: boolean;         // Whether meta data is loaded
+  syncedLastTotal: number; // Items in last sync
+  syncedTimes: number;     // Number of syncs
+  syncedTotal: number;     // Total synced items
+  unsyncedLastTotal: number; // Unsynced items in last check
+  unsyncedTotal: number;    // Total unsynced items
+}
+*/
+
 // Sync pending events with storage
 const { count } = await layer.sync();
 console.log(`Synced ${count} events`);
@@ -139,10 +168,24 @@ await layer.reset(sourceDb, 'users');
 
 ## Types
 
-### PendingEvent
+### LayerMeta
 
 ```typescript
-type PendingEvent<T extends Dict = Dict> = {
+type LayerMeta = {
+	cursor: string;
+	loaded: boolean;
+	syncedLastTotal: number;
+	syncedTimes: number;
+	syncedTotal: number;
+	unsyncedLastTotal: number;
+	unsyncedTotal: number;
+};
+```
+
+### LayerPendingEvent
+
+```typescript
+type LayerPendingEvent<T extends Dict = Dict> = {
 	cursor: string; // Event cursor (timestamp)
 	item: PersistedItem<T>; // The actual item data
 	pk: string; // Partition key
@@ -156,12 +199,15 @@ type PendingEvent<T extends Dict = Dict> = {
 
 ```typescript
 type LayerOptions<T extends Dict = Dict> = {
-	db: Db<PendingEvent<T>>; // DynamoDB instance for events
-	table: string; // Source table name
-	getItemPartition: (item: T) => string; // Get partition from item
-	getItemUniqueIdentifier: (item: T) => string; // Get unique ID from item
-	getter: (partition: string) => Promise<T[]>; // Get items from storage
-	setter: (partition: string, items: T[]) => Promise<void>; // Save to storage
+	backgroundRunner?: (promise: Promise<void>) => void;
+	db: Db<LayerPendingEvent<T>>;
+	getItemPartition?: (item: PersistedItem<T>) => string;
+	getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
+	getter: LayerGetter<PersistedItem<T>>;
+	setter: LayerSetter<PersistedItem<T>>;
+	syncStrategy?: (meta: LayerMeta) => boolean;
+	table: string;
+	ttl?: number | ((item: PersistedItem<T>) => number);
 };
 ```
 
@@ -184,12 +230,20 @@ type LayerOptions<T extends Dict = Dict> = {
 3. **TTL**
 
    - Events have a 5-day TTL by default
+   - Custom TTL can be specified per item
    - After TTL, events are automatically deleted by DynamoDB
 
-4. **Performance**
+4. **Background Sync**
+
+   - Optional background sync support via `backgroundRunner`
+   - Sync strategy can be customized
+   - Comprehensive metrics tracking via `meta()`
+
+5. **Performance**
    - Uses batching for write operations
-   - Supports pagination for large datasets
-   - Efficient partition-based partitioning
+   - Supports sorting options for queries
+   - Efficient partition-based organization
+   - Merge operations for handling concurrent modifications
 
 ## Example Integration with S3
 
@@ -207,6 +261,9 @@ const s3 = new S3({
 const layer = new Dynamodb.Layer({
 	db: eventDb,
 	table: 'source-table',
+	backgroundRunner: promise => {
+		promise.catch(console.error);
+	},
 	getItemPartition: item => item.pk,
 	getItemUniqueIdentifier: item => item.sk,
 	getter: async partition => {
@@ -229,34 +286,10 @@ const layer = new Dynamodb.Layer({
 			Body: JSON.stringify(items),
 			ContentType: 'application/json'
 		});
-	}
+	},
+	syncStrategy: meta => meta.unsyncedTotal > 100
 });
 ```
-
-## Use Cases
-
-1. **Event Sourcing**
-
-   - Track all changes to your DynamoDB tables
-   - Maintain audit history
-   - Support event replay
-
-2. **Caching Layer**
-
-   - Cache table data in S3 or similar storage
-   - Reduce DynamoDB read costs
-   - Improve read performance
-
-3. **Data Synchronization**
-
-   - Keep multiple data stores in sync
-   - Support eventual consistency
-   - Enable offline-first applications
-
-4. **Analytics**
-   - Track changes for analytics
-   - Build event-driven architectures
-   - Support data warehousing
 
 ## Best Practices
 
@@ -272,18 +305,20 @@ const layer = new Dynamodb.Layer({
    - Handle storage failures gracefully
    - Monitor sync operations
 
-3. **Maintenance**
+3. **Background Sync**
 
-   - Regularly check sync status
-   - Monitor TTL deletions
-   - Backup important events
+   - Implement proper error handling in backgroundRunner
+   - Use appropriate sync strategies
+   - Monitor sync metrics
 
 4. **Performance**
    - Batch related changes
    - Use appropriate partition sizes
-   - Monitor DynamoDB capacity
+   - Consider sorting requirements
 
 ## Testing
+
+The module includes comprehensive test coverage. Here's a basic example:
 
 ```typescript
 import Dynamodb from 'use-dynamodb';
@@ -292,15 +327,18 @@ describe('Layer', () => {
 	let layer: Layer<Item>;
 	const getter = vi.fn(async () => []);
 	const setter = vi.fn();
+	const backgroundRunner = vi.fn();
 
 	beforeAll(async () => {
 		layer = new Dynamodb.Layer({
 			db: eventDb,
+			backgroundRunner,
 			getter,
 			setter,
 			table: 'test-table',
 			getItemPartition: item => item.pk,
-			getItemUniqueIdentifier: item => item.sk
+			getItemUniqueIdentifier: item => item.sk,
+			syncStrategy: meta => meta.unsyncedTotal > 10
 		});
 	});
 
@@ -308,8 +346,7 @@ describe('Layer', () => {
 		await layer.set([
 			/* your test events */
 		]);
-		await layer.sync();
-		expect(setter).toHaveBeenCalled();
+		expect(backgroundRunner).toHaveBeenCalled();
 	});
 });
 ```

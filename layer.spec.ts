@@ -1,8 +1,8 @@
-import _ from 'lodash';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import _, { curry } from 'lodash';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Db, { ChangeEvent, ChangeType, PersistedItem } from './index';
-import Layer, { LayerPendingEvent } from './layer';
+import Layer, { LayerMeta, LayerPendingEvent } from './layer';
 
 type Item = {
 	pk: string;
@@ -58,7 +58,19 @@ const createChangeEvents = (options: {
 	});
 };
 
-const factory = async ({ createTable = false, getter, setter }: { createTable?: boolean; getter: Mock; setter: Mock }) => {
+const factory = async ({
+	backgroundRunner,
+	createTable = false,
+	getter,
+	setter,
+	syncStrategy
+}: {
+	backgroundRunner: Mock;
+	createTable?: boolean;
+	getter: Mock;
+	setter: Mock;
+	syncStrategy: Mock;
+}) => {
 	const db = new Db<LayerPendingEvent<Item>>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
 		indexes: [
@@ -81,6 +93,7 @@ const factory = async ({ createTable = false, getter, setter }: { createTable?: 
 	}
 
 	return new Layer({
+		backgroundRunner,
 		db,
 		getItemPartition: item => {
 			return item.pk;
@@ -90,6 +103,7 @@ const factory = async ({ createTable = false, getter, setter }: { createTable?: 
 		},
 		getter,
 		setter,
+		syncStrategy,
 		table: 'table-1'
 	});
 };
@@ -99,9 +113,11 @@ describe('/layer.ts', () => {
 
 	beforeAll(async () => {
 		layer = await factory({
+			backgroundRunner: vi.fn(),
 			createTable: true,
 			getter: vi.fn(async () => []),
-			setter: vi.fn()
+			setter: vi.fn(),
+			syncStrategy: vi.fn()
 		});
 	});
 
@@ -111,9 +127,11 @@ describe('/layer.ts', () => {
 
 	beforeEach(async () => {
 		layer = await factory({
+			backgroundRunner: vi.fn(),
 			createTable: false,
 			getter: vi.fn(async () => []),
-			setter: vi.fn()
+			setter: vi.fn(),
+			syncStrategy: vi.fn()
 		});
 	});
 
@@ -177,15 +195,15 @@ describe('/layer.ts', () => {
 				return [];
 			});
 
-			vi.spyOn(layer, 'cursor');
 			vi.spyOn(layer, 'mergePendingEvents');
+			vi.spyOn(layer, 'meta');
 			vi.spyOn(layer.db, 'query');
 		});
 
 		it('should returns', async () => {
 			const res = await layer.get('pk-0');
 
-			expect(layer.cursor).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith();
 			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-0#__INITIAL__', expect.any(Array));
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
@@ -260,11 +278,11 @@ describe('/layer.ts', () => {
 		});
 
 		it('should returns on cursor', async () => {
-			vi.mocked(layer.cursor).mockResolvedValue('2024-11-28T01:00:00.000Z');
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: '2024-11-28T01:00:00.000Z' } as LayerMeta);
 
 			const res = await layer.get('pk-0');
 
-			expect(layer.cursor).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith();
 			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-0#2024-11-28T01:00:00.000Z', expect.any(Array));
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
@@ -341,7 +359,7 @@ describe('/layer.ts', () => {
 		it('should returns empty if no partition', async () => {
 			const res = await layer.get('pk-1');
 
-			expect(layer.cursor).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith();
 			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-1#__INITIAL__', expect.any(Array));
 			expect(res).toEqual([]);
 		});
@@ -349,7 +367,7 @@ describe('/layer.ts', () => {
 		it('should returns empty if empty partition', async () => {
 			const res = await layer.get();
 
-			expect(layer.cursor).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith();
 			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#__INITIAL__', expect.any(Array));
 			expect(res).toEqual([]);
 		});
@@ -476,6 +494,368 @@ describe('/layer.ts', () => {
 				'layer-008',
 				'layer-009'
 			]);
+		});
+	});
+
+	describe('meta', () => {
+		beforeEach(async () => {
+			vi.spyOn(layer.db, 'update');
+			vi.spyOn(layer.db, 'get');
+		});
+
+		afterEach(async () => {
+			await layer.db.clear();
+		});
+
+		it('should throw error if syncedTotal and unsyncedTotal are greater than 0', async () => {
+			try {
+				await layer.meta({
+					advanceCursor: false,
+					syncedTotal: 10,
+					unsyncedTotal: 10
+				});
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect(err.message).toEqual('Cannot set both syncedTotal and unsyncedTotal at the same time');
+			}
+		});
+
+		it('should get empty meta', async () => {
+			const res = await layer.meta();
+
+			expect(layer.db.get).toHaveBeenCalledWith({
+				consistentRead: true,
+				item: { pk: '__meta', sk: '__meta' }
+			});
+
+			expect(res).toEqual({
+				cursor: '__INITIAL__',
+				loaded: false,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			});
+		});
+
+		it('should get current', async () => {
+			// @ts-expect-error
+			layer.currentMeta = {
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			};
+
+			const res = await layer.meta();
+
+			expect(layer.db.get).not.toHaveBeenCalled();
+			expect(res).toEqual({
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			});
+		});
+
+		it('should upsert with cursor only', async () => {
+			const res = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+
+			expect(layer.db.update).toHaveBeenCalledWith({
+				filter: {
+					item: { pk: '__meta', sk: '__meta' }
+				},
+				attributeNames: {
+					'#cursor': 'cursor'
+				},
+				attributeValues: {
+					':cursor': expect.any(String)
+				},
+				updateExpression: 'SET #cursor = :cursor',
+				upsert: true
+			});
+
+			expect(res.cursor).not.toEqual('__INITIAL__');
+			expect(res).toEqual({
+				cursor: expect.any(String),
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			});
+		});
+
+		it('should upsert with syncedTotal only', async () => {
+			const res = await layer.meta({
+				advanceCursor: false,
+				syncedTotal: 10,
+				unsyncedTotal: 0
+			});
+
+			expect(layer.db.update).toHaveBeenCalledWith({
+				filter: {
+					item: { pk: '__meta', sk: '__meta' }
+				},
+				attributeNames: {
+					'#syncedLastTotal': 'syncedLastTotal',
+					'#syncedTimes': 'syncedTimes',
+					'#syncedTotal': 'syncedTotal',
+					'#unsyncedLastTotal': 'unsyncedLastTotal',
+					'#unsyncedTotal': 'unsyncedTotal'
+				},
+				attributeValues: {
+					':syncedTimes': 1,
+					':syncedTotal': 10,
+					':unsyncedTotal': 0
+				},
+				updateExpression: [
+					'SET #syncedLastTotal = :syncedTotal,',
+					'#unsyncedLastTotal = :unsyncedTotal,',
+					'#unsyncedTotal = :unsyncedTotal',
+					'ADD #syncedTimes :syncedTimes, #syncedTotal :syncedTotal'
+				].join(' '),
+				upsert: true
+			});
+
+			expect(res).toEqual({
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 10,
+				syncedTimes: 1,
+				syncedTotal: 10,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			});
+		});
+
+		it('should upsert with unsyncedTotal only', async () => {
+			const res = await layer.meta({
+				advanceCursor: false,
+				syncedTotal: 0,
+				unsyncedTotal: 10
+			});
+
+			expect(layer.db.update).toHaveBeenCalledWith({
+				filter: {
+					item: { pk: '__meta', sk: '__meta' }
+				},
+				attributeNames: {
+					'#unsyncedLastTotal': 'unsyncedLastTotal',
+					'#unsyncedTotal': 'unsyncedTotal'
+				},
+				attributeValues: {
+					':unsyncedTotal': 10
+				},
+				updateExpression: ['SET #unsyncedLastTotal = :unsyncedTotal', 'ADD #unsyncedTotal :unsyncedTotal'].join(' '),
+				upsert: true
+			});
+
+			expect(res).toEqual({
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 10,
+				unsyncedTotal: 10
+			});
+		});
+
+		it('should upsert with cursor, syncedTotal', async () => {
+			const res = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 10,
+				unsyncedTotal: 0
+			});
+
+			expect(layer.db.update).toHaveBeenCalledWith({
+				filter: {
+					item: { pk: '__meta', sk: '__meta' }
+				},
+				attributeNames: {
+					'#cursor': 'cursor',
+					'#syncedLastTotal': 'syncedLastTotal',
+					'#syncedTimes': 'syncedTimes',
+					'#syncedTotal': 'syncedTotal',
+					'#unsyncedLastTotal': 'unsyncedLastTotal',
+					'#unsyncedTotal': 'unsyncedTotal'
+				},
+				attributeValues: {
+					':cursor': expect.any(String),
+					':syncedTimes': 1,
+					':syncedTotal': 10,
+					':unsyncedTotal': 0
+				},
+				updateExpression: [
+					'SET #cursor = :cursor,',
+					'#syncedLastTotal = :syncedTotal,',
+					'#unsyncedLastTotal = :unsyncedTotal,',
+					'#unsyncedTotal = :unsyncedTotal',
+					'ADD #syncedTimes :syncedTimes, #syncedTotal :syncedTotal'
+				].join(' '),
+				upsert: true
+			});
+
+			expect(res.cursor).not.toEqual('__INITIAL__');
+			expect(res).toEqual({
+				cursor: expect.any(String),
+				loaded: true,
+				syncedLastTotal: 10,
+				syncedTimes: 1,
+				syncedTotal: 10,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			});
+		});
+
+		it('should upsert with cursor, unsyncedTotal', async () => {
+			const res = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 0,
+				unsyncedTotal: 10
+			});
+
+			expect(layer.db.update).toHaveBeenCalledWith({
+				filter: {
+					item: { pk: '__meta', sk: '__meta' }
+				},
+				attributeNames: {
+					'#cursor': 'cursor',
+					'#unsyncedLastTotal': 'unsyncedLastTotal',
+					'#unsyncedTotal': 'unsyncedTotal'
+				},
+				attributeValues: {
+					':cursor': expect.any(String),
+					':unsyncedTotal': 10
+				},
+				updateExpression: ['SET #cursor = :cursor,', '#unsyncedLastTotal = :unsyncedTotal', 'ADD #unsyncedTotal :unsyncedTotal'].join(' '),
+				upsert: true
+			});
+
+			expect(res.cursor).not.toEqual('__INITIAL__');
+			expect(res).toEqual({
+				cursor: expect.any(String),
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 10,
+				unsyncedTotal: 10
+			});
+		});
+
+		it('should update with cursor only', async () => {
+			const res1 = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+			const res2 = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+
+			expect(res1.cursor).not.toEqual(res2.cursor);
+			expect(res1.syncedLastTotal).toEqual(res2.syncedLastTotal);
+			expect(res1.syncedTimes).toEqual(res2.syncedTimes);
+			expect(res1.syncedTotal).toEqual(res2.syncedTotal);
+			expect(res1.unsyncedLastTotal).toEqual(res2.unsyncedLastTotal);
+			expect(res1.unsyncedTotal).toEqual(res2.unsyncedTotal);
+		});
+
+		it('should update with syncedTotal only', async () => {
+			const res1 = await layer.meta({
+				advanceCursor: false,
+				syncedTotal: 10,
+				unsyncedTotal: 0
+			});
+			const res2 = await layer.meta({
+				advanceCursor: false,
+				syncedTotal: 20,
+				unsyncedTotal: 0
+			});
+
+			expect(res1.cursor).toEqual(res2.cursor);
+			expect(res1.syncedLastTotal).toBeLessThan(res2.syncedLastTotal);
+			expect(res1.syncedTimes).toBeLessThan(res2.syncedTimes);
+			expect(res1.syncedTotal).toBeLessThan(res2.syncedTotal);
+			expect(res1.unsyncedLastTotal).toEqual(res2.unsyncedLastTotal);
+			expect(res1.unsyncedTotal).toEqual(res2.unsyncedTotal);
+		});
+
+		it('should update with unsyncedTotal only', async () => {
+			const res1 = await layer.meta({
+				advanceCursor: false,
+				syncedTotal: 0,
+				unsyncedTotal: 10
+			});
+			const res2 = await layer.meta({
+				advanceCursor: false,
+				syncedTotal: 0,
+				unsyncedTotal: 20
+			});
+
+			expect(res1.cursor).toEqual(res2.cursor);
+			expect(res1.syncedLastTotal).toEqual(res2.syncedLastTotal);
+			expect(res1.syncedTimes).toEqual(res2.syncedTimes);
+			expect(res1.syncedTotal).toEqual(res2.syncedTotal);
+			expect(res1.unsyncedLastTotal).toBeLessThan(res2.unsyncedLastTotal);
+			expect(res1.unsyncedTotal).toBeLessThan(res2.unsyncedTotal);
+		});
+
+		it('should upsert with cursor and syncedTotal', async () => {
+			const res1 = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 10,
+				unsyncedTotal: 0
+			});
+			const res2 = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 20,
+				unsyncedTotal: 0
+			});
+
+			expect(res1.cursor).not.toEqual(res2.cursor);
+			expect(res1.syncedLastTotal).toBeLessThan(res2.syncedLastTotal);
+			expect(res1.syncedTimes).toBeLessThan(res2.syncedTimes);
+			expect(res1.syncedTotal).toBeLessThan(res2.syncedTotal);
+			expect(res1.unsyncedLastTotal).toEqual(res2.unsyncedLastTotal);
+			expect(res1.unsyncedTotal).toEqual(res2.unsyncedTotal);
+		});
+
+		it('should upsert with cursor and unsyncedTotal', async () => {
+			const res1 = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 0,
+				unsyncedTotal: 10
+			});
+			const res2 = await layer.meta({
+				advanceCursor: true,
+				syncedTotal: 0,
+				unsyncedTotal: 20
+			});
+
+			expect(res1.cursor).not.toEqual(res2.cursor);
+			expect(res1.syncedLastTotal).toEqual(res2.syncedLastTotal);
+			expect(res1.syncedTimes).toEqual(res2.syncedTimes);
+			expect(res1.syncedTotal).toEqual(res2.syncedTotal);
+			expect(res1.unsyncedLastTotal).toBeLessThan(res2.unsyncedLastTotal);
+			expect(res1.unsyncedTotal).toBeLessThan(res2.unsyncedTotal);
 		});
 	});
 
@@ -662,18 +1042,49 @@ describe('/layer.ts', () => {
 	describe('set', () => {
 		beforeEach(() => {
 			vi.spyOn(layer.db, 'batchWrite');
+			vi.spyOn(layer, 'sync').mockResolvedValue({
+				count: 0
+			});
 		});
 
 		afterAll(async () => {
 			await layer.db.clear();
 		});
 
-		it('should set items', async () => {
+		it('should throw error if item has no unique identifier', async () => {
+			try {
+				const events = createChangeEvents({
+					count: 1,
+					pk: 1,
+					state: 'pending'
+				});
+
+				events[0].item.sk = '';
+				await layer.set(events);
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect(err.message).toEqual('Item must have an unique identifier');
+			}
+		});
+
+		it('should set', async () => {
 			const events = createChangeEvents({
 				count: 3
 			});
 
 			await layer.set(events);
+
+			expect(layer.syncStrategy).toHaveBeenCalledWith({
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 3,
+				unsyncedTotal: 3
+			});
+			expect(layer.sync).not.toHaveBeenCalled();
 
 			expect(layer.db.batchWrite).toHaveBeenCalledWith(
 				expect.arrayContaining([
@@ -717,21 +1128,48 @@ describe('/layer.ts', () => {
 			);
 		});
 
-		it('should throw error if item has no unique identifier', async () => {
-			try {
-				const events = createChangeEvents({
-					count: 1,
-					pk: 1,
-					state: 'pending'
-				});
+		it('should set calling sync in background', async () => {
+			vi.mocked(layer.syncStrategy!).mockReturnValue(true);
 
-				events[0].item.sk = '';
-				await layer.set(events);
+			const events = createChangeEvents({
+				count: 3
+			});
 
-				throw new Error('expected to throw');
-			} catch (err) {
-				expect(err.message).toEqual('Item must have an unique identifier');
-			}
+			await layer.set(events);
+
+			expect(layer.syncStrategy).toHaveBeenCalledWith({
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 3,
+				unsyncedTotal: 6
+			});
+			expect(layer.sync).toHaveBeenCalled();
+			expect(layer.backgroundRunner).toHaveBeenCalledWith(expect.any(Promise));
+		});
+
+		it('should set calling sync', async () => {
+			vi.mocked(layer.syncStrategy!).mockReturnValue(true);
+
+			const events = createChangeEvents({
+				count: 3
+			});
+
+			layer.backgroundRunner = undefined;
+			await layer.set(events);
+
+			expect(layer.syncStrategy).toHaveBeenCalledWith({
+				cursor: '__INITIAL__',
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 3,
+				unsyncedTotal: 9
+			});
+			expect(layer.sync).toHaveBeenCalled();
 		});
 	});
 
@@ -785,7 +1223,7 @@ describe('/layer.ts', () => {
 		});
 
 		beforeEach(async () => {
-			vi.spyOn(layer, 'cursor');
+			vi.spyOn(layer, 'meta');
 			vi.spyOn(layer.db, 'query');
 			vi.spyOn(layer, 'setter');
 
@@ -806,9 +1244,10 @@ describe('/layer.ts', () => {
 		it('should sync on first cursor', async () => {
 			const res = await layer.sync();
 
-			expect(layer.cursor).toHaveBeenCalledTimes(2);
-			expect(layer.cursor).toHaveBeenCalledWith();
-			expect(layer.cursor).toHaveBeenCalledWith(true);
+			expect(layer.meta).toHaveBeenCalledTimes(3);
+			expect(layer.meta).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: true, syncedTotal: 0, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: false, syncedTotal: 8, unsyncedTotal: 0 });
 
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: { cursor: '__INITIAL__' },
@@ -855,13 +1294,14 @@ describe('/layer.ts', () => {
 		});
 
 		it('should sync on 2nd cursor', async () => {
-			vi.mocked(layer.cursor).mockResolvedValue('2024-11-28T01:00:00.000Z');
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: '2024-11-28T01:00:00.000Z' } as LayerMeta);
 
 			const res = await layer.sync();
 
-			expect(layer.cursor).toHaveBeenCalledTimes(2);
-			expect(layer.cursor).toHaveBeenCalledWith();
-			expect(layer.cursor).toHaveBeenCalledWith(true);
+			expect(layer.meta).toHaveBeenCalledTimes(3);
+			expect(layer.meta).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: true, syncedTotal: 0, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: false, syncedTotal: 4, unsyncedTotal: 0 });
 
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: { cursor: '2024-11-28T01:00:00.000Z' },
@@ -886,7 +1326,6 @@ describe('/layer.ts', () => {
 			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-1', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(expect.arrayContaining(['layer-004', 'layer-005', 'layer-006', 'layer-007']));
-
 			expect(_.map(setterArgs[1].items, 'state')).toEqual(expect.arrayContaining([]));
 
 			expect(res).toEqual({
@@ -895,13 +1334,14 @@ describe('/layer.ts', () => {
 		});
 
 		it('should sync on 3rd cursor', async () => {
-			vi.mocked(layer.cursor).mockResolvedValue('2024-11-28T02:00:00.000Z');
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: '2024-11-28T02:00:00.000Z' } as LayerMeta);
 
 			const res = await layer.sync();
 
-			expect(layer.cursor).toHaveBeenCalledTimes(2);
-			expect(layer.cursor).toHaveBeenCalledWith();
-			expect(layer.cursor).toHaveBeenCalledWith(true);
+			expect(layer.meta).toHaveBeenCalledTimes(3);
+			expect(layer.meta).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: true, syncedTotal: 0, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: false, syncedTotal: 4, unsyncedTotal: 0 });
 
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: { cursor: '2024-11-28T02:00:00.000Z' },
@@ -949,9 +1389,11 @@ describe('/layer.ts (without partition)', () => {
 
 	beforeAll(async () => {
 		layer = await factory({
+			backgroundRunner: vi.fn(),
 			createTable: true,
 			getter: vi.fn(async () => []),
-			setter: vi.fn()
+			setter: vi.fn(),
+			syncStrategy: vi.fn()
 		});
 
 		// @ts-ignore
@@ -966,9 +1408,11 @@ describe('/layer.ts (without partition)', () => {
 
 	beforeEach(async () => {
 		layer = await factory({
+			backgroundRunner: vi.fn(),
 			createTable: false,
 			getter: vi.fn(async () => []),
-			setter: vi.fn()
+			setter: vi.fn(),
+			syncStrategy: vi.fn()
 		});
 
 		// @ts-ignore
@@ -1015,7 +1459,7 @@ describe('/layer.ts (without partition)', () => {
 				return [];
 			});
 
-			vi.spyOn(layer, 'cursor');
+			vi.spyOn(layer, 'meta');
 			vi.spyOn(layer, 'mergePendingEvents');
 			vi.spyOn(layer.db, 'query');
 		});
@@ -1023,7 +1467,7 @@ describe('/layer.ts (without partition)', () => {
 		it('should returns', async () => {
 			const res = await layer.get();
 
-			expect(layer.cursor).toHaveBeenCalledWith();
+			expect(layer.meta).toHaveBeenCalledWith();
 			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#__INITIAL__', expect.any(Array));
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {

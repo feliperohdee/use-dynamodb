@@ -15,7 +15,8 @@ import {
 	TransactWriteCommand,
 	TransactWriteCommandInput,
 	TransactWriteCommandOutput,
-	UpdateCommand
+	UpdateCommand,
+	UpdateCommandInput
 } from '@aws-sdk/lib-dynamodb';
 import {
 	AttributeDefinition,
@@ -29,6 +30,7 @@ import {
 	LocalSecondaryIndex
 } from '@aws-sdk/client-dynamodb';
 
+import { concatConditionExpression, concatUpdateExpression } from './expressions-helper';
 import Layer from './layer';
 
 type Dict = Record<string, any>;
@@ -61,7 +63,7 @@ type TableLSI = {
 	name: string;
 	partition: string;
 	sort?: string;
-	sortType: 'S' | 'N';
+	sortType?: 'S' | 'N';
 };
 
 type FilterOptions<T extends Dict = Dict> = {
@@ -84,77 +86,6 @@ type MultiResponse<T extends Dict = Dict> = {
 	count: number;
 	items: PersistedItem<T>[];
 	lastEvaluatedKey: Dict | null;
-};
-
-const concatConditionExpression = (exp1: string, exp2: string): string => {
-	const JOINERS = ['AND', 'OR'];
-
-	// Trim both expressions
-	const trimmedExp1 = _.trim(exp1);
-	const trimmedExp2 = _.trim(exp2);
-
-	// Check if exp2 starts with a joiner
-	const startsWithJoiner = _.some(JOINERS, joiner => {
-		return _.startsWith(trimmedExp2, joiner);
-	});
-
-	// Concatenate expressions
-	const concatenated = startsWithJoiner ? `${trimmedExp1} ${trimmedExp2}` : `${trimmedExp1} AND ${trimmedExp2}`;
-
-	// Remove leading 'AND' or 'OR' and trim
-	return _.trim(_.replace(concatenated, /^\s+(AND|OR)\s+/, ''));
-};
-
-const concatUpdateExpression = (exp1: string, exp2: string): string => {
-	const TRIM = ', ';
-
-	const extractSection = (exp: string, sec: string): string => {
-		const regex = new RegExp(`${sec}\\s+([^A-Z]+)(?=[A-Z]|$)`, 'g');
-		const match = exp.match(regex);
-
-		return match ? _.trim(match[0], ' ,') : '';
-	};
-
-	exp1 = _.trim(exp1, TRIM);
-	exp2 = _.trim(exp2, TRIM);
-
-	const sections = ['SET', 'ADD', 'DELETE', 'REMOVE'];
-	const parts: { [key: string]: string[] } = {};
-
-	_.forEach(sections, sec => {
-		const part1 = extractSection(exp1, sec);
-		const part2 = extractSection(exp2, sec);
-
-		if (part1 || part2) {
-			const items1 = part1 ? part1.replace(`${sec}`, '').split(',') : [];
-			const items2 = part2 ? part2.replace(`${sec}`, '').split(',') : [];
-
-			parts[sec] = _.uniq(
-				[...items1, ...items2].map(item => {
-					return _.trim(item, TRIM);
-				})
-			);
-		}
-	});
-
-	let result = _.trim(
-		_.map(sections, sec => {
-			if (parts[sec] && parts[sec].length > 0) {
-				return `${sec} ${_.join(parts[sec], ', ')}`;
-			}
-			return '';
-		})
-			.filter(Boolean)
-			.join(' ')
-	);
-
-	if (_.isEmpty(result)) {
-		const combinedExp = _.trim(`${exp1}, ${exp2}`, TRIM);
-
-		result = combinedExp ? `SET ${combinedExp}` : '';
-	}
-
-	return result;
 };
 
 class Dynamodb<T extends Dict = Dict> {
@@ -486,7 +417,8 @@ class Dynamodb<T extends Dict = Dict> {
 		},
 		ts: number = _.now()
 	): Promise<PersistedItem<R>> {
-		options = options || {};
+		// avoid mutation on tests
+		options = { ...options };
 
 		let conditionExpression = '';
 
@@ -718,7 +650,8 @@ class Dynamodb<T extends Dict = Dict> {
 		},
 		ts: number = _.now()
 	): Promise<PersistedItem<R>> {
-		options = options || {};
+		// avoid mutation on tests
+		options = { ...options };
 
 		const nowISO = new Date(ts).toISOString();
 		const newItem = {
@@ -986,6 +919,9 @@ class Dynamodb<T extends Dict = Dict> {
 		},
 		ts: number = _.now()
 	): Promise<PersistedItem<R>> {
+		// avoid mutation on tests
+		options = { ...options };
+
 		const currentItem = await this.get(options.filter);
 
 		if (!currentItem && !options.upsert) {
@@ -996,23 +932,14 @@ class Dynamodb<T extends Dict = Dict> {
 			throw new Error('Existing item or filter.item must be provided');
 		}
 
-		let conditionExpression = '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)';
+		let conditionExpression = '';
 		let referenceKey = this.getSchemaKeys(currentItem || options.filter.item!);
 
 		if (options.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
+			conditionExpression = options.conditionExpression;
 		}
 
-		options.attributeNames = {
-			...options.attributeNames,
-			'#__ts': '__ts'
-		};
-
-		options.attributeValues = {
-			...options.attributeValues,
-			':__curr_ts': currentItem?.__ts ?? 0
-		};
-
+		// start of updateExpression
 		if (options.updateExpression) {
 			const nowISO = new Date(ts).toISOString();
 
@@ -1024,6 +951,7 @@ class Dynamodb<T extends Dict = Dict> {
 			options.attributeNames = {
 				...options.attributeNames,
 				'#__cr': '__createdAt',
+				'#__ts': '__ts',
 				'#__up': '__updatedAt'
 			};
 
@@ -1035,25 +963,28 @@ class Dynamodb<T extends Dict = Dict> {
 			};
 
 			if (!options.upsert) {
-				conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
+				// for updateExpression we check for existence, not last update timestamp because updateExpression is atomic
+				conditionExpression = concatConditionExpression('attribute_exists(#__pk)', conditionExpression);
 				options.attributeNames = {
 					...options.attributeNames,
 					'#__pk': this.schema.partition
 				};
 			}
 
-			const res = await this.client.send(
-				new UpdateCommand({
-					ConditionExpression: conditionExpression,
-					ExpressionAttributeNames: options.attributeNames,
-					ExpressionAttributeValues: options.attributeValues,
-					Key: referenceKey,
-					ReturnValues: 'ALL_NEW',
-					TableName: this.table,
-					UpdateExpression: options.updateExpression
-				})
-			);
+			const updateCommandInput: UpdateCommandInput = {
+				ExpressionAttributeNames: options.attributeNames,
+				ExpressionAttributeValues: options.attributeValues,
+				Key: referenceKey,
+				ReturnValues: 'ALL_NEW',
+				TableName: this.table,
+				UpdateExpression: options.updateExpression
+			};
 
+			if (conditionExpression) {
+				updateCommandInput.ConditionExpression = conditionExpression;
+			}
+
+			const res = await this.client.send(new UpdateCommand(updateCommandInput));
 			const updatedItem = res.Attributes as PersistedItem<R>;
 
 			await this.notifyChanges([
@@ -1093,13 +1024,26 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		if (!options.upsert) {
-			conditionExpression = `(attribute_exists(#__pk) AND ${conditionExpression})`;
+			// for updateFunction (not upsert) we check for existence and last update timestamp to ensure atomicity
+			conditionExpression = concatConditionExpression('(attribute_exists(#__pk) AND #__ts = :__curr_ts)', conditionExpression);
 			options.attributeNames = {
 				...options.attributeNames,
-				'#__pk': this.schema.partition,
-				'#__ts': '__ts'
+				'#__pk': this.schema.partition
 			};
+		} else {
+			// for updateFunction (with possible upsert) we check for non existence or last update timestamp to ensure atomicity
+			conditionExpression = concatConditionExpression('(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)', conditionExpression);
 		}
+
+		options.attributeNames = {
+			...options.attributeNames,
+			'#__ts': '__ts'
+		};
+
+		options.attributeValues = {
+			...options.attributeValues,
+			':__curr_ts': currentItem?.__ts ?? 0
+		};
 
 		return this.put(updatedItem, {
 			attributeNames: options.attributeNames,
@@ -1240,5 +1184,4 @@ class Dynamodb<T extends Dict = Dict> {
 }
 
 export { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI, TableLSI };
-export { concatConditionExpression, concatUpdateExpression };
 export default Dynamodb;

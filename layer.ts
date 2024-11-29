@@ -5,9 +5,12 @@ import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI } from './i
 
 type LayerMeta = {
 	cursor: string;
-	syncLastTotal: number;
-	syncTimes: number;
-	syncTotal: number;
+	loaded: boolean;
+	syncedLastTotal: number;
+	syncedTimes: number;
+	syncedTotal: number;
+	unsyncedLastTotal: number;
+	unsyncedTotal: number;
 };
 
 type LayerGetter<T extends PersistedItem> = (partition: string) => Promise<T[]>;
@@ -24,31 +27,45 @@ type LayerPendingEvent<T extends Dict = Dict> = {
 const FIVE_DAYS_IN_SECONDS = 5 * 24 * 60 * 60;
 
 class Layer<T extends Dict = Dict> {
+	public backgroundRunner?: (promise: Promise<void>) => void;
 	public db: Db<LayerPendingEvent<T>>;
 	public getter: LayerGetter<PersistedItem<T>>;
 	public setter: LayerSetter<PersistedItem<T>>;
+	public syncStrategy?: (meta: LayerMeta) => boolean;
 
-	private currentCursor: string;
+	private currentMeta: LayerMeta;
 	private getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
 	private getItemPartition: (item: PersistedItem<T>) => string;
 	private table: string;
 	private ttl: (item: PersistedItem<T>) => number;
 
 	constructor(options: {
+		backgroundRunner?: () => Promise<void>;
 		db: Db<LayerPendingEvent<T>>;
 		getItemPartition?: (item: PersistedItem<T>) => string;
 		getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
 		getter: LayerGetter<PersistedItem<T>>;
 		setter: LayerSetter<PersistedItem<T>>;
+		syncStrategy?: (meta: LayerMeta) => boolean;
 		table: string;
 		ttl?: number | ((item: PersistedItem<T>) => number);
 	}) {
-		this.currentCursor = '';
+		this.currentMeta = {
+			cursor: '__INITIAL__',
+			loaded: false,
+			syncedLastTotal: 0,
+			syncedTimes: 0,
+			syncedTotal: 0,
+			unsyncedLastTotal: 0,
+			unsyncedTotal: 0
+		};
+		this.backgroundRunner = options.backgroundRunner;
 		this.db = options.db;
 		this.getItemUniqueIdentifier = options.getItemUniqueIdentifier;
 		this.getItemPartition = options.getItemPartition ?? (() => '');
 		this.getter = options.getter;
 		this.setter = options.setter;
+		this.syncStrategy = options.syncStrategy;
 		this.table = options.table;
 
 		if (_.isFunction(options.ttl)) {
@@ -76,34 +93,138 @@ class Layer<T extends Dict = Dict> {
 		}
 	}
 
-	async cursor(set?: boolean) {
+	async meta(set?: { advanceCursor: boolean; unsyncedTotal: number; syncedTotal: number }): Promise<LayerMeta> {
 		if (set) {
-			const { cursor } = await this.db.update({
-				filter: {
-					item: {
-						cursor: new Date().toISOString(),
-						pk: '__meta',
-						sk: '__meta'
+			if (set.syncedTotal > 0 && set.unsyncedTotal > 0) {
+				throw new Error('Cannot set both syncedTotal and unsyncedTotal at the same time');
+			}
+
+			let update: {
+				atributeNames: Dict;
+				attributeValues: Dict;
+				expression: Dict;
+			} = {
+				atributeNames: {},
+				attributeValues: {},
+				expression: {
+					add: [],
+					set: []
+				}
+			};
+
+			if (set.advanceCursor) {
+				update = {
+					...update,
+					atributeNames: {
+						...update.atributeNames,
+						'#cursor': 'cursor'
+					},
+					attributeValues: {
+						...update.attributeValues,
+						':cursor': new Date().toISOString()
+					},
+					expression: {
+						...update.expression,
+						set: [...update.expression.set, '#cursor = :cursor']
 					}
+				};
+			}
+
+			if (set.syncedTotal > 0) {
+				update = {
+					...update,
+					atributeNames: {
+						...update.atributeNames,
+						'#syncedLastTotal': 'syncedLastTotal',
+						'#syncedTimes': 'syncedTimes',
+						'#syncedTotal': 'syncedTotal',
+						'#unsyncedLastTotal': 'unsyncedLastTotal',
+						'#unsyncedTotal': 'unsyncedTotal'
+					},
+					attributeValues: {
+						...update.attributeValues,
+						':syncedTimes': 1,
+						':syncedTotal': set.syncedTotal,
+						':unsyncedTotal': 0
+					},
+					expression: {
+						...update.expression,
+						add: [...update.expression.add, '#syncedTimes :syncedTimes', '#syncedTotal :syncedTotal'],
+						set: [
+							...update.expression.set,
+							'#syncedLastTotal = :syncedTotal',
+							'#unsyncedLastTotal = :unsyncedTotal',
+							'#unsyncedTotal = :unsyncedTotal'
+						]
+					}
+				};
+			} else if (set.unsyncedTotal > 0) {
+				update = {
+					...update,
+					atributeNames: {
+						...update.atributeNames,
+						'#unsyncedLastTotal': 'unsyncedLastTotal',
+						'#unsyncedTotal': 'unsyncedTotal'
+					},
+					attributeValues: {
+						...update.attributeValues,
+						':unsyncedTotal': set.unsyncedTotal
+					},
+					expression: {
+						...update.expression,
+						add: [...update.expression.add, '#unsyncedTotal :unsyncedTotal'],
+						set: [...update.expression.set, '#unsyncedLastTotal = :unsyncedTotal']
+					}
+				};
+			}
+
+			const meta = await this.db.update<LayerMeta>({
+				filter: {
+					item: { pk: '__meta', sk: '__meta' }
 				},
+				attributeNames: update.atributeNames,
+				attributeValues: update.attributeValues,
+				updateExpression: (() => {
+					let expression = '';
+
+					if (_.size(update.expression.set)) {
+						expression += `SET ${_.join(update.expression.set, ', ')}`;
+					}
+
+					if (_.size(update.expression.add)) {
+						expression += ` ADD ${_.join(update.expression.add, ', ')}`;
+					}
+
+					return expression;
+				})(),
 				upsert: true
 			});
 
-			this.currentCursor = cursor;
-		} else if (!this.currentCursor) {
-			const res = await this.db.get({
+			this.currentMeta = {
+				...this.currentMeta,
+				...meta,
+				loaded: true
+			};
+		} else if (!this.currentMeta.loaded) {
+			const res = await this.db.get<LayerMeta>({
 				consistentRead: true,
 				item: { pk: '__meta', sk: '__meta' }
 			});
 
-			this.currentCursor = res?.cursor ?? '__INITIAL__';
+			if (res) {
+				this.currentMeta = {
+					...this.currentMeta,
+					...res,
+					loaded: true
+				};
+			}
 		}
 
-		return this.currentCursor;
+		return _.omit(this.currentMeta, ['pk', 'sk', '__createdAt', '__ts', '__updatedAt']) as LayerMeta;
 	}
 
 	async get(partition?: string, sorted = true): Promise<PersistedItem<T>[]> {
-		const cursor = await this.cursor();
+		const { cursor } = await this.meta();
 		const pk = this.resolvePartition(cursor, partition);
 		const pendingEvents = await this.db.query({
 			item: { pk },
@@ -152,7 +273,7 @@ class Layer<T extends Dict = Dict> {
 	}
 
 	async reset(db: Db<T>, partition?: string) {
-		const cursor = await this.cursor();
+		const { cursor } = await this.meta();
 		const pk = this.resolvePartition(cursor, partition);
 		const pendingEvents: Record<string, PersistedItem<T>[]> = {};
 
@@ -200,7 +321,17 @@ class Layer<T extends Dict = Dict> {
 	}
 
 	async set(events: ChangeEvent<T>[], cursor?: string) {
-		cursor = cursor ?? (await this.cursor());
+		if (!_.size(events)) {
+			return;
+		}
+
+		cursor =
+			cursor ??
+			(await (async () => {
+				const { cursor } = await this.meta();
+
+				return cursor;
+			})());
 
 		const now = _.now();
 		const writeEvents = _.map(events, ({ item, type }) => {
@@ -223,14 +354,38 @@ class Layer<T extends Dict = Dict> {
 			return pendingItem;
 		});
 
+		const meta = await this.meta({
+			advanceCursor: false,
+			unsyncedTotal: _.size(writeEvents),
+			syncedTotal: 0
+		});
+
+		if (_.isFunction(this.syncStrategy)) {
+			const sync = this.syncStrategy(meta);
+
+			if (sync) {
+				_.isFunction(this.backgroundRunner)
+					? this.backgroundRunner(
+							(async () => {
+								await this.sync();
+							})()
+						)
+					: await this.sync();
+			}
+		}
+
 		return this.db.batchWrite(writeEvents);
 	}
 
 	async sync() {
-		const cursor = await this.cursor();
+		const { cursor } = await this.meta();
 
-		// update cursor now to ensure we don't miss any changes from now
-		await this.cursor(true);
+		// advance cursor now to ensure we don't miss any changes from now
+		await this.meta({
+			advanceCursor: true,
+			syncedTotal: 0,
+			unsyncedTotal: 0
+		});
 
 		const pendingEvents: Record<string, LayerPendingEvent<T>[]> = {};
 
@@ -256,11 +411,17 @@ class Layer<T extends Dict = Dict> {
 			await this.setter(pk.replace(`#${cursor}`, ''), newItems);
 		}
 
+		await this.meta({
+			advanceCursor: false,
+			syncedTotal: count,
+			unsyncedTotal: 0
+		});
+
 		return {
 			count
 		};
 	}
 }
 
-export { LayerPendingEvent };
+export { LayerMeta, LayerPendingEvent };
 export default Layer;
