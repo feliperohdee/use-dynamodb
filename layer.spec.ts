@@ -135,6 +135,48 @@ describe('/layer.ts', () => {
 		});
 	});
 
+	describe('acquireLock', () => {
+		beforeEach(async () => {
+			await layer.db.clear();
+		});
+
+		afterAll(async () => {
+			await layer.db.clear();
+		});
+
+		it('should acquire lock', async () => {
+			const lock = await layer.acquireLock(true);
+
+			expect(lock).toBeTruthy();
+
+			const lockItem = await layer.db.get({
+				item: { pk: '__table-1__', sk: '__lock__' }
+			});
+			expect(lockItem).toBeTruthy();
+		});
+
+		it('should fail to acquire lock if already locked', async () => {
+			await layer.acquireLock(true);
+
+			const lock = await layer.acquireLock(true);
+
+			expect(lock).toBeFalsy();
+		});
+
+		it('should release lock', async () => {
+			await layer.acquireLock(true);
+
+			const lock = await layer.acquireLock(false);
+
+			expect(lock).toBeTruthy();
+
+			const lockItem = await layer.db.get({
+				item: { pk: '__table-1__', sk: '__lock__' }
+			});
+			expect(lockItem).toBeFalsy();
+		});
+	});
+
 	describe('get', () => {
 		beforeAll(async () => {
 			await Promise.all([
@@ -728,16 +770,19 @@ describe('/layer.ts', () => {
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
-				filter: {
-					item: { pk: '__table-1__', sk: '__meta__' }
-				},
 				attributeNames: {
 					'#cursor': 'cursor',
 					'#cursorMax': 'cursorMax'
 				},
 				attributeValues: {
 					':cursor': 1,
-					':cursorMax': 1
+					':cursorMax': 1,
+					':negative': -1,
+					':positive': 1
+				},
+				conditionExpression: '(:cursor = :negative AND #cursor >= :positive) OR :cursor = :positive',
+				filter: {
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				updateExpression: 'ADD #cursor :cursor, #cursorMax :cursorMax',
 				upsert: true
@@ -755,6 +800,25 @@ describe('/layer.ts', () => {
 			});
 		});
 
+		it('should not upsert negative cursor', async () => {
+			const res = await layer.meta({
+				advanceCursor: -1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+
+			expect(res).toEqual({
+				cursor: 0,
+				cursorMax: 0,
+				loaded: true,
+				syncedLastTotal: 0,
+				syncedTimes: 0,
+				syncedTotal: 0,
+				unsyncedLastTotal: 0,
+				unsyncedTotal: 0
+			});
+		});
+
 		it('should upsert with syncedTotal only', async () => {
 			const res = await layer.meta({
 				advanceCursor: 0,
@@ -763,9 +827,6 @@ describe('/layer.ts', () => {
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
-				filter: {
-					item: { pk: '__table-1__', sk: '__meta__' }
-				},
 				attributeNames: {
 					'#syncedLastTotal': 'syncedLastTotal',
 					'#syncedTimes': 'syncedTimes',
@@ -777,6 +838,10 @@ describe('/layer.ts', () => {
 					':syncedTimes': 1,
 					':syncedTotal': 10,
 					':unsyncedTotal': 0
+				},
+				conditionExpression: '',
+				filter: {
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				updateExpression: [
 					'SET #syncedLastTotal = :syncedTotal,',
@@ -807,15 +872,16 @@ describe('/layer.ts', () => {
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
-				filter: {
-					item: { pk: '__table-1__', sk: '__meta__' }
-				},
 				attributeNames: {
 					'#unsyncedLastTotal': 'unsyncedLastTotal',
 					'#unsyncedTotal': 'unsyncedTotal'
 				},
 				attributeValues: {
 					':unsyncedTotal': 10
+				},
+				conditionExpression: '',
+				filter: {
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				updateExpression: ['SET #unsyncedLastTotal = :unsyncedTotal', 'ADD #unsyncedTotal :unsyncedTotal'].join(' '),
 				upsert: true
@@ -841,9 +907,6 @@ describe('/layer.ts', () => {
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
-				filter: {
-					item: { pk: '__table-1__', sk: '__meta__' }
-				},
 				attributeNames: {
 					'#cursor': 'cursor',
 					'#cursorMax': 'cursorMax',
@@ -858,7 +921,13 @@ describe('/layer.ts', () => {
 					':cursorMax': 1,
 					':syncedTimes': 1,
 					':syncedTotal': 10,
+					':negative': -1,
+					':positive': 1,
 					':unsyncedTotal': 0
+				},
+				conditionExpression: '(:cursor = :negative AND #cursor >= :positive) OR :cursor = :positive',
+				filter: {
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				updateExpression: [
 					'SET #syncedLastTotal = :syncedTotal,',
@@ -891,9 +960,6 @@ describe('/layer.ts', () => {
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
-				filter: {
-					item: { pk: '__table-1__', sk: '__meta__' }
-				},
 				attributeNames: {
 					'#cursor': 'cursor',
 					'#cursorMax': 'cursorMax',
@@ -903,7 +969,13 @@ describe('/layer.ts', () => {
 				attributeValues: {
 					':cursor': 1,
 					':cursorMax': 1,
+					':negative': -1,
+					':positive': 1,
 					':unsyncedTotal': 10
+				},
+				conditionExpression: '(:cursor = :negative AND #cursor >= :positive) OR :cursor = :positive',
+				filter: {
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				updateExpression: [
 					'SET #unsyncedLastTotal = :unsyncedTotal',
@@ -958,6 +1030,26 @@ describe('/layer.ts', () => {
 			expect(res2.syncedTotal).toEqual(res3.syncedTotal);
 			expect(res2.unsyncedLastTotal).toEqual(res3.unsyncedLastTotal);
 			expect(res2.unsyncedTotal).toEqual(res3.unsyncedTotal);
+		});
+
+		it('should not update negative cursor', async () => {
+			await layer.meta({
+				advanceCursor: 0,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+			await layer.meta({
+				advanceCursor: -1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+			const res = await layer.meta({
+				advanceCursor: -1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+
+			expect(res.cursor).toEqual(0);
 		});
 
 		it('should update with syncedTotal only', async () => {
@@ -1255,7 +1347,8 @@ describe('/layer.ts', () => {
 		beforeEach(() => {
 			vi.spyOn(layer.db, 'batchWrite');
 			vi.spyOn(layer, 'sync').mockResolvedValue({
-				count: 0
+				count: 0,
+				locked: false
 			});
 		});
 
@@ -1438,6 +1531,7 @@ describe('/layer.ts', () => {
 		});
 
 		beforeEach(async () => {
+			vi.spyOn(layer, 'acquireLock');
 			vi.spyOn(layer, 'meta');
 			vi.spyOn(layer.db, 'query');
 			vi.spyOn(layer, 'setter');
@@ -1456,8 +1550,29 @@ describe('/layer.ts', () => {
 			});
 		});
 
+		it('should not sync if already syncing', async () => {
+			vi.mocked(layer.acquireLock).mockResolvedValue(false);
+
+			const res = await layer.sync();
+
+			expect(layer.acquireLock).toHaveBeenCalledOnce();
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+
+			expect(layer.meta).not.toHaveBeenCalled();
+			expect(layer.db.query).not.toHaveBeenCalled();
+			expect(layer.setter).not.toHaveBeenCalled();
+
+			expect(res).toEqual({
+				count: 0,
+				locked: true
+			});
+		});
+
 		it('should sync on first cursor', async () => {
 			const res = await layer.sync();
+
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+			expect(layer.acquireLock).toHaveBeenCalledWith(false);
 
 			expect(layer.meta).toHaveBeenCalledTimes(3);
 			expect(layer.meta).toHaveBeenCalledWith();
@@ -1509,7 +1624,8 @@ describe('/layer.ts', () => {
 			);
 
 			expect(res).toEqual({
-				count: 8
+				count: 8,
+				locked: false
 			});
 		});
 
@@ -1517,6 +1633,9 @@ describe('/layer.ts', () => {
 			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1 } as LayerMeta);
 
 			const res = await layer.sync();
+
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+			expect(layer.acquireLock).toHaveBeenCalledWith(false);
 
 			expect(layer.meta).toHaveBeenCalledTimes(3);
 			expect(layer.meta).toHaveBeenCalledWith();
@@ -1554,7 +1673,8 @@ describe('/layer.ts', () => {
 			expect(_.map(setterArgs[1].items, 'state')).toEqual(expect.arrayContaining([]));
 
 			expect(res).toEqual({
-				count: 4
+				count: 4,
+				locked: false
 			});
 		});
 
@@ -1562,6 +1682,9 @@ describe('/layer.ts', () => {
 			vi.mocked(layer.meta).mockResolvedValue({ cursor: 2 } as LayerMeta);
 
 			const res = await layer.sync();
+
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+			expect(layer.acquireLock).toHaveBeenCalledWith(false);
 
 			expect(layer.meta).toHaveBeenCalledTimes(3);
 			expect(layer.meta).toHaveBeenCalledWith();
@@ -1607,7 +1730,8 @@ describe('/layer.ts', () => {
 			);
 
 			expect(res).toEqual({
-				count: 4
+				count: 4,
+				locked: false
 			});
 		});
 
@@ -1620,6 +1744,9 @@ describe('/layer.ts', () => {
 				throw new Error('expected to throw');
 			} catch (err) {
 				expect(err.message).toEqual('setter error');
+
+				expect(layer.acquireLock).toHaveBeenCalledWith(true);
+				expect(layer.acquireLock).toHaveBeenCalledWith(false);
 
 				expect(layer.meta).toHaveBeenCalledTimes(3);
 				expect(layer.meta).toHaveBeenCalledWith();
@@ -1971,7 +2098,8 @@ describe('/layer.ts (without partition)', () => {
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(expect.arrayContaining(['pending-000', 'pending-001', 'layer-004', 'layer-005']));
 
 			expect(res).toEqual({
-				count: 4
+				count: 4,
+				locked: false
 			});
 		});
 	});

@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 
 import type Db from './index';
 import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI } from './index';
@@ -26,6 +27,7 @@ type LayerPendingEvent<T extends Dict = Dict> = {
 };
 
 const FIVE_DAYS_IN_SECONDS = 5 * 24 * 60 * 60;
+const LOCK_TTL_IN_SECONDS = 5 * 60;
 
 class Layer<T extends Dict = Dict> {
 	public backgroundRunner?: (promise: Promise<void>) => void;
@@ -104,10 +106,12 @@ class Layer<T extends Dict = Dict> {
 			let update: {
 				atributeNames: Dict;
 				attributeValues: Dict;
+				conditionExpression: string;
 				expression: Dict;
 			} = {
 				atributeNames: {},
 				attributeValues: {},
+				conditionExpression: '',
 				expression: {
 					add: [],
 					set: []
@@ -125,8 +129,11 @@ class Layer<T extends Dict = Dict> {
 					attributeValues: {
 						...update.attributeValues,
 						':cursor': set.advanceCursor,
-						':cursorMax': Math.max(0, set.advanceCursor)
+						':cursorMax': Math.max(0, set.advanceCursor),
+						':negative': -1,
+						':positive': 1
 					},
+					conditionExpression: '(:cursor = :negative AND #cursor >= :positive) OR :cursor = :positive',
 					expression: {
 						...update.expression,
 						add: [...update.expression.add, '#cursor :cursor', '#cursorMax :cursorMax']
@@ -182,33 +189,45 @@ class Layer<T extends Dict = Dict> {
 				};
 			}
 
-			const meta = await this.db.update<LayerMeta>({
-				filter: {
-					item: { pk: `__${this.table}__`, sk: '__meta__' }
-				},
-				attributeNames: update.atributeNames,
-				attributeValues: update.attributeValues,
-				updateExpression: (() => {
-					let expression = '';
+			try {
+				const meta = await this.db.update<LayerMeta>({
+					conditionExpression: update.conditionExpression,
+					filter: {
+						item: { pk: `__${this.table}__`, sk: '__meta__' }
+					},
+					attributeNames: update.atributeNames,
+					attributeValues: update.attributeValues,
+					updateExpression: (() => {
+						let expression = '';
 
-					if (_.size(update.expression.set)) {
-						expression += `SET ${_.join(update.expression.set, ', ')}`;
-					}
+						if (_.size(update.expression.set)) {
+							expression += `SET ${_.join(update.expression.set, ', ')}`;
+						}
 
-					if (_.size(update.expression.add)) {
-						expression += ` ADD ${_.join(update.expression.add, ', ')}`;
-					}
+						if (_.size(update.expression.add)) {
+							expression += ` ADD ${_.join(update.expression.add, ', ')}`;
+						}
 
-					return _.trim(expression);
-				})(),
-				upsert: true
-			});
+						return _.trim(expression);
+					})(),
+					upsert: true
+				});
 
-			this.currentMeta = {
-				...this.currentMeta,
-				...meta,
-				loaded: true
-			};
+				this.currentMeta = {
+					...this.currentMeta,
+					...meta,
+					loaded: true
+				};
+			} catch (err) {
+				if (err instanceof ConditionalCheckFailedException) {
+					return {
+						...this.currentMeta,
+						loaded: true
+					};
+				}
+
+				throw err;
+			}
 		} else if (!this.currentMeta.loaded) {
 			const res = await this.db.get<LayerMeta>({
 				consistentRead: true,
@@ -258,6 +277,36 @@ class Layer<T extends Dict = Dict> {
 		}
 
 		return newItems;
+	}
+
+	async acquireLock(lock: boolean): Promise<boolean> {
+		const now = _.now();
+
+		if (lock) {
+			try {
+				await this.db.update({
+					attributeNames: { '#__ts': '__ts' },
+					attributeValues: { ':ts_less_ttl': now - LOCK_TTL_IN_SECONDS * 1000 },
+					conditionExpression: 'attribute_not_exists(#__ts) OR #__ts < :ts_less_ttl',
+					filter: {
+						item: { pk: `__${this.table}__`, sk: '__lock__' }
+					},
+					upsert: true
+				});
+
+				return true; // Lock acquired
+			} catch {
+				return false; // Failed to acquire lock
+			}
+		}
+
+		await this.db.delete({
+			filter: {
+				item: { pk: `__${this.table}__`, sk: '__lock__' }
+			}
+		});
+
+		return true; // Lock released
 	}
 
 	merge(layerItems: PersistedItem<T>[], pendingEvents: PersistedItem<LayerPendingEvent<T>>[]): PersistedItem<T>[] {
@@ -401,61 +450,75 @@ class Layer<T extends Dict = Dict> {
 	}
 
 	async sync() {
-		const { cursor } = await this.meta();
+		const lock = await this.acquireLock(true);
 
-		// advance cursor now to ensure we don't miss any changes from now
-		await this.meta({
-			advanceCursor: 1,
-			syncedTotal: 0,
-			unsyncedTotal: 0
-		});
-
-		const pendingEvents: Record<string, PersistedItem<LayerPendingEvent<T>>[]> = {};
-		const { count } = await this.db.query({
-			item: { cursor, pk: this.table },
-			limit: Infinity,
-			onChunk: async ({ items }) => {
-				const pendingEventsByPk = _.groupBy(items, 'pk');
-
-				for (const pk in pendingEventsByPk) {
-					if (!pendingEvents[pk]) {
-						pendingEvents[pk] = [];
-					}
-
-					pendingEvents[pk] = [...pendingEvents[pk], ...pendingEventsByPk[pk]];
-				}
-			},
-			prefix: true
-		});
+		if (!lock) {
+			return {
+				count: 0,
+				locked: true
+			};
+		}
 
 		try {
-			for (const pk in pendingEvents) {
-				const pkWithoutCursor = pk.replace(`#${cursor}`, '');
-				const layerItems = await this.getter(pkWithoutCursor);
-				const newItems = this.merge(layerItems, pendingEvents[pk]);
+			const { cursor } = await this.meta();
 
-				await this.setter(pkWithoutCursor, newItems);
-			}
-
+			// advance cursor now to ensure we don't miss any changes from now
 			await this.meta({
-				advanceCursor: 0,
-				syncedTotal: count,
-				unsyncedTotal: 0
-			});
-		} catch (err) {
-			// if there is an error, we need to rollback the cursor
-			await this.meta({
-				advanceCursor: -1,
+				advanceCursor: 1,
 				syncedTotal: 0,
 				unsyncedTotal: 0
 			});
 
-			throw err;
-		}
+			const pendingEvents: Record<string, PersistedItem<LayerPendingEvent<T>>[]> = {};
+			const { count } = await this.db.query({
+				item: { cursor, pk: this.table },
+				limit: Infinity,
+				onChunk: async ({ items }) => {
+					const pendingEventsByPk = _.groupBy(items, 'pk');
 
-		return {
-			count
-		};
+					for (const pk in pendingEventsByPk) {
+						if (!pendingEvents[pk]) {
+							pendingEvents[pk] = [];
+						}
+
+						pendingEvents[pk] = [...pendingEvents[pk], ...pendingEventsByPk[pk]];
+					}
+				},
+				prefix: true
+			});
+
+			try {
+				for (const pk in pendingEvents) {
+					const pkWithoutCursor = pk.replace(`#${cursor}`, '');
+					const layerItems = await this.getter(pkWithoutCursor);
+					const newItems = this.merge(layerItems, pendingEvents[pk]);
+
+					await this.setter(pkWithoutCursor, newItems);
+				}
+
+				await this.meta({
+					advanceCursor: 0,
+					syncedTotal: count,
+					unsyncedTotal: 0
+				});
+			} catch (err) {
+				// if there is an error, we need to rollback the cursor
+				await this.meta({
+					advanceCursor: -1,
+					syncedTotal: 0,
+					unsyncedTotal: 0
+				});
+
+				throw err;
+			}
+
+			return {
+				count,
+				locked: false
+			};
+		} finally {
+			await this.acquireLock(false);
+		}
 	}
 }
 
