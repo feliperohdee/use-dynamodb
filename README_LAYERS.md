@@ -45,7 +45,7 @@ const eventDb = new Dynamodb<LayerPendingEvent<Item>>({
 		{
 			name: 'cursor-index',
 			partition: 'cursor',
-			partitionType: 'S',
+			partitionType: 'N',
 			sort: 'pk',
 			sortType: 'S'
 		}
