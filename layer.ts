@@ -4,7 +4,8 @@ import type Db from './index';
 import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI } from './index';
 
 type LayerMeta = {
-	cursor: string;
+	cursor: number;
+	cursorMax: number;
 	loaded: boolean;
 	syncedLastTotal: number;
 	syncedTimes: number;
@@ -16,7 +17,7 @@ type LayerMeta = {
 type LayerGetter<T extends PersistedItem> = (partition: string) => Promise<T[]>;
 type LayerSetter<T extends PersistedItem> = (partition: string, value: T[]) => Promise<void>;
 type LayerPendingEvent<T extends Dict = Dict> = {
-	cursor: string;
+	cursor: number;
 	item: PersistedItem<T>;
 	pk: string;
 	sk: string;
@@ -51,7 +52,8 @@ class Layer<T extends Dict = Dict> {
 		ttl?: number | ((item: PersistedItem<T>) => number);
 	}) {
 		this.currentMeta = {
-			cursor: '__INITIAL__',
+			cursor: 0,
+			cursorMax: 0,
 			loaded: false,
 			syncedLastTotal: 0,
 			syncedTimes: 0,
@@ -85,7 +87,7 @@ class Layer<T extends Dict = Dict> {
 		}
 
 		const cursorGSI = _.find(this.db.indexes, (index: TableGSI) => {
-			return index.partition === 'cursor' && index.partitionType === 'S' && index.sort === 'pk' && index.sortType === 'S';
+			return index.partition === 'cursor' && index.partitionType === 'N' && index.sort === 'pk' && index.sortType === 'S';
 		});
 
 		if (!cursorGSI) {
@@ -93,7 +95,7 @@ class Layer<T extends Dict = Dict> {
 		}
 	}
 
-	async meta(set?: { advanceCursor: boolean; unsyncedTotal: number; syncedTotal: number }): Promise<LayerMeta> {
+	async meta(set?: { advanceCursor: 1 | 0 | -1; unsyncedTotal: number; syncedTotal: number }): Promise<LayerMeta> {
 		if (set) {
 			if (set.syncedTotal > 0 && set.unsyncedTotal > 0) {
 				throw new Error('Cannot set both syncedTotal and unsyncedTotal at the same time');
@@ -112,20 +114,22 @@ class Layer<T extends Dict = Dict> {
 				}
 			};
 
-			if (set.advanceCursor) {
+			if (set.advanceCursor !== 0) {
 				update = {
 					...update,
 					atributeNames: {
 						...update.atributeNames,
-						'#cursor': 'cursor'
+						'#cursor': 'cursor',
+						'#cursorMax': 'cursorMax'
 					},
 					attributeValues: {
 						...update.attributeValues,
-						':cursor': new Date().toISOString()
+						':cursor': set.advanceCursor,
+						':cursorMax': Math.max(0, set.advanceCursor)
 					},
 					expression: {
 						...update.expression,
-						set: [...update.expression.set, '#cursor = :cursor']
+						add: [...update.expression.add, '#cursor :cursor', '#cursorMax :cursorMax']
 					}
 				};
 			}
@@ -180,7 +184,7 @@ class Layer<T extends Dict = Dict> {
 
 			const meta = await this.db.update<LayerMeta>({
 				filter: {
-					item: { pk: '__meta', sk: '__meta' }
+					item: { pk: `__${this.table}__`, sk: '__meta__' }
 				},
 				attributeNames: update.atributeNames,
 				attributeValues: update.attributeValues,
@@ -195,7 +199,7 @@ class Layer<T extends Dict = Dict> {
 						expression += ` ADD ${_.join(update.expression.add, ', ')}`;
 					}
 
-					return expression;
+					return _.trim(expression);
 				})(),
 				upsert: true
 			});
@@ -208,7 +212,7 @@ class Layer<T extends Dict = Dict> {
 		} else if (!this.currentMeta.loaded) {
 			const res = await this.db.get<LayerMeta>({
 				consistentRead: true,
-				item: { pk: '__meta', sk: '__meta' }
+				item: { pk: `__${this.table}__`, sk: '__meta__' }
 			});
 
 			if (res) {
@@ -224,14 +228,25 @@ class Layer<T extends Dict = Dict> {
 	}
 
 	async get(partition?: string, sorted = true): Promise<PersistedItem<T>[]> {
-		const { cursor } = await this.meta();
-		const pk = this.resolvePartition(cursor, partition);
-		const pendingEvents = await this.db.query({
-			item: { pk },
-			limit: Infinity
+		const { cursor, cursorMax } = await this.meta();
+		const pks = _.map(_.range(cursor, cursorMax + 1), cursor => {
+			return this.resolvePartition(cursor, partition);
 		});
 
-		const newItems = await this.mergePendingEvents(pk, pendingEvents.items);
+		const pendingEvents = await Promise.all(
+			_.map(pks, async pk => {
+				const res = await this.db.query({
+					item: { pk },
+					limit: Infinity
+				});
+
+				return res.items;
+			})
+		);
+
+		const pkWithoutCursor = pks[0].replace(`#${cursor}`, '');
+		const layerItems = await this.getter(pkWithoutCursor);
+		const newItems = this.merge(layerItems, _.flatten(pendingEvents));
 
 		if (sorted) {
 			return _.sortBy(newItems, [
@@ -245,9 +260,17 @@ class Layer<T extends Dict = Dict> {
 		return newItems;
 	}
 
-	async mergePendingEvents(pk: string = '', pendingEvents: LayerPendingEvent<T>[]): Promise<PersistedItem<T>[]> {
-		const layerItems = await this.getter(pk);
-		const [pendingSet, pendingDelete] = _.partition(pendingEvents, ({ type }) => {
+	merge(layerItems: PersistedItem<T>[], pendingEvents: PersistedItem<LayerPendingEvent<T>>[]): PersistedItem<T>[] {
+		const mostRecentPendingEvents = _(pendingEvents)
+			.groupBy(({ item }) => {
+				return this.getItemUniqueIdentifier(item);
+			})
+			.mapValues(group => {
+				return _.maxBy(group, '__ts')!;
+			})
+			.value();
+
+		const [pendingSet, pendingDelete] = _.partition(mostRecentPendingEvents, ({ type }) => {
 			return type !== 'DELETE';
 		});
 
@@ -316,11 +339,11 @@ class Layer<T extends Dict = Dict> {
 		};
 	}
 
-	resolvePartition(cursor: string, partition?: string) {
-		return _.compact([this.table, _.trim(partition), cursor]).join('#');
+	resolvePartition(cursor: number, partition?: string) {
+		return _.compact([this.table, _.trim(partition), `${cursor}`]).join('#');
 	}
 
-	async set(events: ChangeEvent<T>[], cursor?: string) {
+	async set(events: ChangeEvent<T>[], cursor?: number) {
 		if (!_.size(events)) {
 			return;
 		}
@@ -355,7 +378,7 @@ class Layer<T extends Dict = Dict> {
 		});
 
 		const meta = await this.meta({
-			advanceCursor: false,
+			advanceCursor: 0,
 			unsyncedTotal: _.size(writeEvents),
 			syncedTotal: 0
 		});
@@ -382,15 +405,14 @@ class Layer<T extends Dict = Dict> {
 
 		// advance cursor now to ensure we don't miss any changes from now
 		await this.meta({
-			advanceCursor: true,
+			advanceCursor: 1,
 			syncedTotal: 0,
 			unsyncedTotal: 0
 		});
 
-		const pendingEvents: Record<string, LayerPendingEvent<T>[]> = {};
-
+		const pendingEvents: Record<string, PersistedItem<LayerPendingEvent<T>>[]> = {};
 		const { count } = await this.db.query({
-			item: { cursor },
+			item: { cursor, pk: this.table },
 			limit: Infinity,
 			onChunk: async ({ items }) => {
 				const pendingEventsByPk = _.groupBy(items, 'pk');
@@ -402,20 +424,34 @@ class Layer<T extends Dict = Dict> {
 
 					pendingEvents[pk] = [...pendingEvents[pk], ...pendingEventsByPk[pk]];
 				}
+			},
+			prefix: true
+		});
+
+		try {
+			for (const pk in pendingEvents) {
+				const pkWithoutCursor = pk.replace(`#${cursor}`, '');
+				const layerItems = await this.getter(pkWithoutCursor);
+				const newItems = this.merge(layerItems, pendingEvents[pk]);
+
+				await this.setter(pkWithoutCursor, newItems);
 			}
-		});
 
-		for (const pk in pendingEvents) {
-			const newItems = await this.mergePendingEvents(pk, pendingEvents[pk]);
+			await this.meta({
+				advanceCursor: 0,
+				syncedTotal: count,
+				unsyncedTotal: 0
+			});
+		} catch (err) {
+			// if there is an error, we need to rollback the cursor
+			await this.meta({
+				advanceCursor: -1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
 
-			await this.setter(pk.replace(`#${cursor}`, ''), newItems);
+			throw err;
 		}
-
-		await this.meta({
-			advanceCursor: false,
-			syncedTotal: count,
-			unsyncedTotal: 0
-		});
 
 		return {
 			count

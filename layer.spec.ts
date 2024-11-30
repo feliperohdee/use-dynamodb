@@ -10,7 +10,7 @@ type Item = {
 	state: string;
 };
 
-const createItem = (options: { index: number; pk?: number; state?: 'layer' | 'pending'; ts?: number }): PersistedItem<Item> => {
+const createItem = (options: { index: number; pk?: number; state?: string; ts?: number }): PersistedItem<Item> => {
 	const { index, pk = 0, state = 'pending', ts = _.now() } = options;
 	const nowISO = new Date(ts).toISOString();
 	const indexString = _.padStart(`${index}`, 3, '0');
@@ -29,7 +29,7 @@ const createChangeEvents = (options: {
 	count: number;
 	initialIndex?: number;
 	pk?: number;
-	state?: 'layer' | 'pending';
+	state?: string;
 	table?: string;
 	ts?: number;
 	type?: ChangeType;
@@ -77,7 +77,7 @@ const factory = async ({
 			{
 				name: 'cursor-index',
 				partition: 'cursor',
-				partitionType: 'S',
+				partitionType: 'N',
 				sort: 'pk',
 				sortType: 'S'
 			}
@@ -138,41 +138,53 @@ describe('/layer.ts', () => {
 	describe('get', () => {
 		beforeAll(async () => {
 			await Promise.all([
+				// PUT 0-5
 				layer.set(
 					createChangeEvents({
-						count: 8
+						count: 5
 					}),
-					'__INITIAL__'
+					0
 				),
+				// DELETE 2-3
 				layer.set(
 					createChangeEvents({
 						count: 2,
 						initialIndex: 2,
 						type: 'DELETE'
 					}),
-					'__INITIAL__'
+					0
 				),
+				// PUT 8-11
 				layer.set(
 					createChangeEvents({
-						count: 2,
+						count: 4,
 						initialIndex: 8
 					}),
-					'__INITIAL__'
-				),
+					0
+				)
+			]);
+
+			await new Promise(resolve => {
+				return setTimeout(resolve, 100);
+			});
+
+			await Promise.all([
+				// DELETE 3-4
 				layer.set(
 					createChangeEvents({
 						count: 2,
-						initialIndex: 2,
+						initialIndex: 3,
 						type: 'DELETE'
 					}),
-					'2024-11-28T01:00:00.000Z'
+					1
 				),
+				// PUT 11-12
 				layer.set(
 					createChangeEvents({
 						count: 2,
-						initialIndex: 8
+						initialIndex: 11
 					}),
-					'2024-11-28T01:00:00.000Z'
+					1
 				)
 			]);
 		});
@@ -184,7 +196,7 @@ describe('/layer.ts', () => {
 		beforeEach(async () => {
 			vi.mocked(layer.getter).mockImplementation(async (partition: string) => {
 				if (_.startsWith(partition, 'table-1#pk-0')) {
-					return _.times(12, index => {
+					return _.times(10, index => {
 						return createItem({
 							index,
 							state: 'layer'
@@ -195,7 +207,7 @@ describe('/layer.ts', () => {
 				return [];
 			});
 
-			vi.spyOn(layer, 'mergePendingEvents');
+			vi.spyOn(layer, 'merge');
 			vi.spyOn(layer, 'meta');
 			vi.spyOn(layer.db, 'query');
 		});
@@ -204,13 +216,14 @@ describe('/layer.ts', () => {
 			const res = await layer.get('pk-0');
 
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-0#__INITIAL__', expect.any(Array));
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-0');
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					pk: 'table-1#pk-0#__INITIAL__'
+					pk: 'table-1#pk-0#0'
 				},
 				limit: Infinity
 			});
+			expect(layer.merge).toHaveBeenCalledWith(expect.any(Array), expect.any(Array));
 
 			expect(res).toEqual([
 				expect.objectContaining({
@@ -242,17 +255,17 @@ describe('/layer.ts', () => {
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-005',
-					state: 'pending-005'
+					state: 'layer-005'
 				}),
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-006',
-					state: 'pending-006'
+					state: 'layer-006'
 				}),
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-007',
-					state: 'pending-007'
+					state: 'layer-007'
 				}),
 				expect.objectContaining({
 					pk: 'pk-0',
@@ -267,29 +280,30 @@ describe('/layer.ts', () => {
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-010',
-					state: 'layer-010'
+					state: 'pending-010'
 				}),
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-011',
-					state: 'layer-011'
+					state: 'pending-011'
 				})
 			]);
 		});
 
 		it('should returns on cursor', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: '2024-11-28T01:00:00.000Z' } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1, cursorMax: 1 } as LayerMeta);
 
 			const res = await layer.get('pk-0');
 
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-0#2024-11-28T01:00:00.000Z', expect.any(Array));
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-0');
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					pk: 'table-1#pk-0#2024-11-28T01:00:00.000Z'
+					pk: 'table-1#pk-0#1'
 				},
 				limit: Infinity
 			});
+			expect(layer.merge).toHaveBeenCalledWith(expect.any(Array), expect.any(Array));
 
 			expect(res).toEqual([
 				expect.objectContaining({
@@ -302,6 +316,93 @@ describe('/layer.ts', () => {
 					sk: 'sk-001',
 					state: 'layer-001'
 				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-002',
+					state: 'layer-002'
+				}),
+				// ** DELETED **
+				// expect.objectContaining({
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-003',
+				// 	state: 'layer-003'
+				// }),
+				// expect.objectContaining({
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-004',
+				// 	state: 'layer-004'
+				// }),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-005',
+					state: 'layer-005'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-006',
+					state: 'layer-006'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-007',
+					state: 'layer-007'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-008',
+					state: 'layer-008'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-009',
+					state: 'layer-009'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-011',
+					state: 'pending-011'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-012',
+					state: 'pending-012'
+				})
+			]);
+		});
+
+		it('should returns on multiple cursors', async () => {
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 0, cursorMax: 1 } as LayerMeta);
+
+			const res = await layer.get('pk-0');
+
+			expect(layer.meta).toHaveBeenCalledWith();
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-0');
+			expect(layer.db.query).toHaveBeenCalledTimes(2);
+			expect(layer.db.query).toHaveBeenCalledWith({
+				item: {
+					pk: 'table-1#pk-0#0'
+				},
+				limit: Infinity
+			});
+			expect(layer.db.query).toHaveBeenCalledWith({
+				item: {
+					pk: 'table-1#pk-0#1'
+				},
+				limit: Infinity
+			});
+			expect(layer.merge).toHaveBeenCalledWith(expect.any(Array), expect.any(Array));
+
+			expect(res).toEqual([
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-000',
+					state: 'pending-000'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-001',
+					state: 'pending-001'
+				}),
 				// ** DELETED **
 				// expect.objectContaining({
 				// 	pk: 'pk-0',
@@ -313,11 +414,11 @@ describe('/layer.ts', () => {
 				// 	sk: 'sk-003',
 				// 	state: 'layer-003'
 				// }),
-				expect.objectContaining({
-					pk: 'pk-0',
-					sk: 'sk-004',
-					state: 'layer-004'
-				}),
+				// expect.objectContaining({
+				// 	pk: 'pk-0',
+				// 	sk: 'sk-004',
+				// 	state: 'layer-004'
+				// }),
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-005',
@@ -346,12 +447,17 @@ describe('/layer.ts', () => {
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-010',
-					state: 'layer-010'
+					state: 'pending-010'
 				}),
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-011',
-					state: 'layer-011'
+					state: 'pending-011'
+				}),
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-012',
+					state: 'pending-012'
 				})
 			]);
 		});
@@ -360,7 +466,7 @@ describe('/layer.ts', () => {
 			const res = await layer.get('pk-1');
 
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#pk-1#__INITIAL__', expect.any(Array));
+			expect(layer.merge).toHaveBeenCalledWith(expect.any(Array), expect.any(Array));
 			expect(res).toEqual([]);
 		});
 
@@ -368,63 +474,64 @@ describe('/layer.ts', () => {
 			const res = await layer.get();
 
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#__INITIAL__', expect.any(Array));
+			expect(layer.merge).toHaveBeenCalledWith(expect.any(Array), expect.any(Array));
 			expect(res).toEqual([]);
 		});
 	});
 
-	describe('mergePendingEvents', () => {
-		beforeEach(async () => {
-			vi.mocked(layer.getter).mockImplementation(async (partition: string) => {
-				if (partition === 'table-1#pk-0') {
-					return _.times(12, index => {
-						return createItem({
-							index,
-							state: 'layer'
-						});
-					});
-				}
-
-				return [];
+	describe('merge', () => {
+		it('should merge pending items', () => {
+			const now = _.now();
+			const layerItems = _.times(12, index => {
+				return createItem({
+					index,
+					state: 'layer'
+				});
 			});
-		});
 
-		it('should merge pending items', async () => {
-			const pk = 'table-1#pk-0';
-			const pendingEvents = _.times(5, index => {
+			const pendingEventsCursor0 = _.times(10, index => {
 				const item = createItem({
-					index: 10 + index,
-					state: 'pending'
+					index: 5 + index,
+					state: 'pending-cursor-0'
 				});
 
-				const pendingEvent: LayerPendingEvent<Item> = {
-					cursor: '__INITIAL__',
+				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+					__createdAt: '',
+					__updatedAt: '',
+					__ts: now,
+					cursor: 0,
 					item,
-					pk,
+					pk: 'table-1#pk-0',
 					sk: item.sk,
 					type: 'PUT',
-					ttl: _.now()
+					ttl: now
 				};
 
 				return pendingEvent;
 			});
 
-			expect(_.map(await layer.getter(pk), 'state')).toEqual([
-				'layer-000',
-				'layer-001',
-				'layer-002',
-				'layer-003',
-				'layer-004',
-				'layer-005',
-				'layer-006',
-				'layer-007',
-				'layer-008',
-				'layer-009',
-				'layer-010',
-				'layer-011'
-			]);
+			const pendingEventsCursor1 = _.times(10, index => {
+				const item = createItem({
+					index: 5 + index,
+					state: 'pending-cursor-1'
+				});
 
-			const res = await layer.mergePendingEvents(pk, pendingEvents);
+				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+					__createdAt: '',
+					__updatedAt: '',
+					__ts: now + (index % 2 ? 1000 : -1000),
+					cursor: 1,
+					item,
+					pk: 'table-1#pk-0',
+					sk: item.sk,
+					type: 'PUT',
+					ttl: now
+				};
+
+				return pendingEvent;
+			});
+
+			const res = layer.merge(layerItems, [...pendingEventsCursor0, ...pendingEventsCursor1]);
 
 			expect(_.map(res, 'state')).toEqual([
 				'layer-000',
@@ -432,55 +539,89 @@ describe('/layer.ts', () => {
 				'layer-002',
 				'layer-003',
 				'layer-004',
-				'layer-005',
-				'layer-006',
-				'layer-007',
-				'layer-008',
-				'layer-009',
-				'pending-010',
-				'pending-011',
-				'pending-012',
-				'pending-013',
-				'pending-014'
+				'pending-cursor-0-005',
+				'pending-cursor-1-006',
+				'pending-cursor-0-007',
+				'pending-cursor-1-008',
+				'pending-cursor-0-009',
+				'pending-cursor-1-010',
+				'pending-cursor-0-011',
+				'pending-cursor-1-012',
+				'pending-cursor-0-013',
+				'pending-cursor-1-014'
+			]);
+
+			expect(_.map(res, 'sk')).toEqual([
+				'sk-000',
+				'sk-001',
+				'sk-002',
+				'sk-003',
+				'sk-004',
+				'sk-005',
+				'sk-006',
+				'sk-007',
+				'sk-008',
+				'sk-009',
+				'sk-010',
+				'sk-011',
+				'sk-012',
+				'sk-013',
+				'sk-014'
 			]);
 		});
 
-		it('should handle DELETE type correctly', async () => {
-			const pk = 'table-1#pk-0';
-			const pendingEvents = _.times(5, index => {
+		it('should handle DELETE type', () => {
+			const now = _.now();
+			const layerItems = _.times(12, index => {
+				return createItem({
+					index,
+					state: 'layer'
+				});
+			});
+
+			const pendingEventsCursor0 = _.times(10, index => {
 				const item = createItem({
-					index: 10 + index,
-					state: 'pending'
+					index: 5 + index,
+					state: 'pending-cursor-0'
 				});
 
-				const pendingEvent: LayerPendingEvent<Item> = {
-					cursor: '__INITIAL__',
+				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+					__createdAt: '',
+					__updatedAt: '',
+					__ts: now,
+					cursor: 0,
 					item,
-					pk,
+					pk: 'table-1#pk-0',
 					sk: item.sk,
 					type: 'DELETE',
-					ttl: _.now()
+					ttl: now
 				};
 
 				return pendingEvent;
 			});
 
-			expect(_.map(await layer.getter(pk), 'state')).toEqual([
-				'layer-000',
-				'layer-001',
-				'layer-002',
-				'layer-003',
-				'layer-004',
-				'layer-005',
-				'layer-006',
-				'layer-007',
-				'layer-008',
-				'layer-009',
-				'layer-010',
-				'layer-011'
-			]);
+			const pendingEventsCursor1 = _.times(5, index => {
+				const item = createItem({
+					index: 5 + index,
+					state: 'pending-cursor-1'
+				});
 
-			const res = await layer.mergePendingEvents(pk, pendingEvents);
+				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+					__createdAt: '',
+					__updatedAt: '',
+					__ts: now + (index % 2 ? 1000 : -1000),
+					cursor: 1,
+					item,
+					pk: 'table-1#pk-0',
+					sk: item.sk,
+					type: 'PUT',
+					ttl: now
+				};
+
+				return pendingEvent;
+			});
+
+			const res = layer.merge(layerItems, [...pendingEventsCursor0, ...pendingEventsCursor1]);
 
 			expect(_.map(res, 'state')).toEqual([
 				'layer-000',
@@ -488,11 +629,21 @@ describe('/layer.ts', () => {
 				'layer-002',
 				'layer-003',
 				'layer-004',
-				'layer-005',
-				'layer-006',
-				'layer-007',
-				'layer-008',
-				'layer-009'
+				'pending-cursor-1-006',
+				'pending-cursor-1-008'
+			]);
+
+			expect(_.map(res, 'sk')).toEqual([
+				'sk-000',
+				'sk-001',
+				'sk-002',
+				'sk-003',
+				'sk-004',
+				// 'sk-005',
+				'sk-006',
+				// 'sk-007',
+				'sk-008'
+				// 'sk-009'
 			]);
 		});
 	});
@@ -510,7 +661,7 @@ describe('/layer.ts', () => {
 		it('should throw error if syncedTotal and unsyncedTotal are greater than 0', async () => {
 			try {
 				await layer.meta({
-					advanceCursor: false,
+					advanceCursor: 0,
 					syncedTotal: 10,
 					unsyncedTotal: 10
 				});
@@ -526,11 +677,12 @@ describe('/layer.ts', () => {
 
 			expect(layer.db.get).toHaveBeenCalledWith({
 				consistentRead: true,
-				item: { pk: '__meta', sk: '__meta' }
+				item: { pk: '__table-1__', sk: '__meta__' }
 			});
 
 			expect(res).toEqual({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: false,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -543,7 +695,8 @@ describe('/layer.ts', () => {
 		it('should get current', async () => {
 			// @ts-expect-error
 			layer.currentMeta = {
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -556,7 +709,8 @@ describe('/layer.ts', () => {
 
 			expect(layer.db.get).not.toHaveBeenCalled();
 			expect(res).toEqual({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -566,30 +720,32 @@ describe('/layer.ts', () => {
 			});
 		});
 
-		it('should upsert with cursor only', async () => {
+		it('should upsert with advanceCursor only', async () => {
 			const res = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 0,
 				unsyncedTotal: 0
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
 				filter: {
-					item: { pk: '__meta', sk: '__meta' }
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				attributeNames: {
-					'#cursor': 'cursor'
+					'#cursor': 'cursor',
+					'#cursorMax': 'cursorMax'
 				},
 				attributeValues: {
-					':cursor': expect.any(String)
+					':cursor': 1,
+					':cursorMax': 1
 				},
-				updateExpression: 'SET #cursor = :cursor',
+				updateExpression: 'ADD #cursor :cursor, #cursorMax :cursorMax',
 				upsert: true
 			});
 
-			expect(res.cursor).not.toEqual('__INITIAL__');
 			expect(res).toEqual({
-				cursor: expect.any(String),
+				cursor: 1,
+				cursorMax: 1,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -601,14 +757,14 @@ describe('/layer.ts', () => {
 
 		it('should upsert with syncedTotal only', async () => {
 			const res = await layer.meta({
-				advanceCursor: false,
+				advanceCursor: 0,
 				syncedTotal: 10,
 				unsyncedTotal: 0
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
 				filter: {
-					item: { pk: '__meta', sk: '__meta' }
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				attributeNames: {
 					'#syncedLastTotal': 'syncedLastTotal',
@@ -632,7 +788,8 @@ describe('/layer.ts', () => {
 			});
 
 			expect(res).toEqual({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 10,
 				syncedTimes: 1,
@@ -644,14 +801,14 @@ describe('/layer.ts', () => {
 
 		it('should upsert with unsyncedTotal only', async () => {
 			const res = await layer.meta({
-				advanceCursor: false,
+				advanceCursor: 0,
 				syncedTotal: 0,
 				unsyncedTotal: 10
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
 				filter: {
-					item: { pk: '__meta', sk: '__meta' }
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				attributeNames: {
 					'#unsyncedLastTotal': 'unsyncedLastTotal',
@@ -665,7 +822,8 @@ describe('/layer.ts', () => {
 			});
 
 			expect(res).toEqual({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -675,19 +833,20 @@ describe('/layer.ts', () => {
 			});
 		});
 
-		it('should upsert with cursor, syncedTotal', async () => {
+		it('should upsert with advanceCursor, syncedTotal', async () => {
 			const res = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 10,
 				unsyncedTotal: 0
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
 				filter: {
-					item: { pk: '__meta', sk: '__meta' }
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				attributeNames: {
 					'#cursor': 'cursor',
+					'#cursorMax': 'cursorMax',
 					'#syncedLastTotal': 'syncedLastTotal',
 					'#syncedTimes': 'syncedTimes',
 					'#syncedTotal': 'syncedTotal',
@@ -695,24 +854,26 @@ describe('/layer.ts', () => {
 					'#unsyncedTotal': 'unsyncedTotal'
 				},
 				attributeValues: {
-					':cursor': expect.any(String),
+					':cursor': 1,
+					':cursorMax': 1,
 					':syncedTimes': 1,
 					':syncedTotal': 10,
 					':unsyncedTotal': 0
 				},
 				updateExpression: [
-					'SET #cursor = :cursor,',
-					'#syncedLastTotal = :syncedTotal,',
+					'SET #syncedLastTotal = :syncedTotal,',
 					'#unsyncedLastTotal = :unsyncedTotal,',
 					'#unsyncedTotal = :unsyncedTotal',
-					'ADD #syncedTimes :syncedTimes, #syncedTotal :syncedTotal'
+					'ADD #cursor :cursor,',
+					'#cursorMax :cursorMax,',
+					'#syncedTimes :syncedTimes, #syncedTotal :syncedTotal'
 				].join(' '),
 				upsert: true
 			});
 
-			expect(res.cursor).not.toEqual('__INITIAL__');
 			expect(res).toEqual({
-				cursor: expect.any(String),
+				cursor: 1,
+				cursorMax: 1,
 				loaded: true,
 				syncedLastTotal: 10,
 				syncedTimes: 1,
@@ -722,33 +883,40 @@ describe('/layer.ts', () => {
 			});
 		});
 
-		it('should upsert with cursor, unsyncedTotal', async () => {
+		it('should upsert with advanceCursor, unsyncedTotal', async () => {
 			const res = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 0,
 				unsyncedTotal: 10
 			});
 
 			expect(layer.db.update).toHaveBeenCalledWith({
 				filter: {
-					item: { pk: '__meta', sk: '__meta' }
+					item: { pk: '__table-1__', sk: '__meta__' }
 				},
 				attributeNames: {
 					'#cursor': 'cursor',
+					'#cursorMax': 'cursorMax',
 					'#unsyncedLastTotal': 'unsyncedLastTotal',
 					'#unsyncedTotal': 'unsyncedTotal'
 				},
 				attributeValues: {
-					':cursor': expect.any(String),
+					':cursor': 1,
+					':cursorMax': 1,
 					':unsyncedTotal': 10
 				},
-				updateExpression: ['SET #cursor = :cursor,', '#unsyncedLastTotal = :unsyncedTotal', 'ADD #unsyncedTotal :unsyncedTotal'].join(' '),
+				updateExpression: [
+					'SET #unsyncedLastTotal = :unsyncedTotal',
+					'ADD #cursor :cursor,',
+					'#cursorMax :cursorMax,',
+					'#unsyncedTotal :unsyncedTotal'
+				].join(' '),
 				upsert: true
 			});
 
-			expect(res.cursor).not.toEqual('__INITIAL__');
 			expect(res).toEqual({
-				cursor: expect.any(String),
+				cursor: 1,
+				cursorMax: 1,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -758,39 +926,54 @@ describe('/layer.ts', () => {
 			});
 		});
 
-		it('should update with cursor only', async () => {
+		it('should update with advanceCursor only', async () => {
 			const res1 = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 0,
 				unsyncedTotal: 0
 			});
 			const res2 = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
+			const res3 = await layer.meta({
+				advanceCursor: -1,
 				syncedTotal: 0,
 				unsyncedTotal: 0
 			});
 
-			expect(res1.cursor).not.toEqual(res2.cursor);
+			expect(res1.cursor).toBeLessThan(res2.cursor);
+			expect(res1.cursorMax).toBeLessThan(res2.cursorMax);
 			expect(res1.syncedLastTotal).toEqual(res2.syncedLastTotal);
 			expect(res1.syncedTimes).toEqual(res2.syncedTimes);
 			expect(res1.syncedTotal).toEqual(res2.syncedTotal);
 			expect(res1.unsyncedLastTotal).toEqual(res2.unsyncedLastTotal);
 			expect(res1.unsyncedTotal).toEqual(res2.unsyncedTotal);
+
+			expect(res2.cursor).toBeGreaterThan(res3.cursor);
+			expect(res2.cursorMax).toEqual(res3.cursorMax);
+			expect(res2.syncedLastTotal).toEqual(res3.syncedLastTotal);
+			expect(res2.syncedTimes).toEqual(res3.syncedTimes);
+			expect(res2.syncedTotal).toEqual(res3.syncedTotal);
+			expect(res2.unsyncedLastTotal).toEqual(res3.unsyncedLastTotal);
+			expect(res2.unsyncedTotal).toEqual(res3.unsyncedTotal);
 		});
 
 		it('should update with syncedTotal only', async () => {
 			const res1 = await layer.meta({
-				advanceCursor: false,
+				advanceCursor: 0,
 				syncedTotal: 10,
 				unsyncedTotal: 0
 			});
 			const res2 = await layer.meta({
-				advanceCursor: false,
+				advanceCursor: 0,
 				syncedTotal: 20,
 				unsyncedTotal: 0
 			});
 
 			expect(res1.cursor).toEqual(res2.cursor);
+			expect(res1.cursorMax).toEqual(res2.cursorMax);
 			expect(res1.syncedLastTotal).toBeLessThan(res2.syncedLastTotal);
 			expect(res1.syncedTimes).toBeLessThan(res2.syncedTimes);
 			expect(res1.syncedTotal).toBeLessThan(res2.syncedTotal);
@@ -800,17 +983,18 @@ describe('/layer.ts', () => {
 
 		it('should update with unsyncedTotal only', async () => {
 			const res1 = await layer.meta({
-				advanceCursor: false,
+				advanceCursor: 0,
 				syncedTotal: 0,
 				unsyncedTotal: 10
 			});
 			const res2 = await layer.meta({
-				advanceCursor: false,
+				advanceCursor: 0,
 				syncedTotal: 0,
 				unsyncedTotal: 20
 			});
 
 			expect(res1.cursor).toEqual(res2.cursor);
+			expect(res1.cursorMax).toEqual(res2.cursorMax);
 			expect(res1.syncedLastTotal).toEqual(res2.syncedLastTotal);
 			expect(res1.syncedTimes).toEqual(res2.syncedTimes);
 			expect(res1.syncedTotal).toEqual(res2.syncedTotal);
@@ -818,44 +1002,72 @@ describe('/layer.ts', () => {
 			expect(res1.unsyncedTotal).toBeLessThan(res2.unsyncedTotal);
 		});
 
-		it('should upsert with cursor and syncedTotal', async () => {
+		it('should update with advanceCursor and syncedTotal', async () => {
 			const res1 = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 10,
 				unsyncedTotal: 0
 			});
 			const res2 = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 20,
 				unsyncedTotal: 0
 			});
+			const res3 = await layer.meta({
+				advanceCursor: -1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
 
-			expect(res1.cursor).not.toEqual(res2.cursor);
+			expect(res1.cursor).toBeLessThan(res2.cursor);
+			expect(res1.cursorMax).toBeLessThan(res2.cursorMax);
 			expect(res1.syncedLastTotal).toBeLessThan(res2.syncedLastTotal);
 			expect(res1.syncedTimes).toBeLessThan(res2.syncedTimes);
 			expect(res1.syncedTotal).toBeLessThan(res2.syncedTotal);
 			expect(res1.unsyncedLastTotal).toEqual(res2.unsyncedLastTotal);
 			expect(res1.unsyncedTotal).toEqual(res2.unsyncedTotal);
+
+			expect(res2.cursor).toBeGreaterThan(res3.cursor);
+			expect(res2.cursorMax).toEqual(res3.cursorMax);
+			expect(res2.syncedLastTotal).toEqual(res3.syncedLastTotal);
+			expect(res2.syncedTimes).toEqual(res3.syncedTimes);
+			expect(res2.syncedTotal).toEqual(res3.syncedTotal);
+			expect(res2.unsyncedLastTotal).toEqual(res3.unsyncedLastTotal);
+			expect(res2.unsyncedTotal).toEqual(res3.unsyncedTotal);
 		});
 
-		it('should upsert with cursor and unsyncedTotal', async () => {
+		it('should update with advanceCursor and unsyncedTotal', async () => {
 			const res1 = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 0,
 				unsyncedTotal: 10
 			});
 			const res2 = await layer.meta({
-				advanceCursor: true,
+				advanceCursor: 1,
 				syncedTotal: 0,
 				unsyncedTotal: 20
 			});
+			const res3 = await layer.meta({
+				advanceCursor: -1,
+				syncedTotal: 0,
+				unsyncedTotal: 0
+			});
 
-			expect(res1.cursor).not.toEqual(res2.cursor);
+			expect(res1.cursor).toBeLessThan(res2.cursor);
+			expect(res1.cursorMax).toBeLessThan(res2.cursorMax);
 			expect(res1.syncedLastTotal).toEqual(res2.syncedLastTotal);
 			expect(res1.syncedTimes).toEqual(res2.syncedTimes);
 			expect(res1.syncedTotal).toEqual(res2.syncedTotal);
 			expect(res1.unsyncedLastTotal).toBeLessThan(res2.unsyncedLastTotal);
 			expect(res1.unsyncedTotal).toBeLessThan(res2.unsyncedTotal);
+
+			expect(res2.cursor).toBeGreaterThan(res3.cursor);
+			expect(res2.cursorMax).toEqual(res3.cursorMax);
+			expect(res2.syncedLastTotal).toEqual(res3.syncedLastTotal);
+			expect(res2.syncedTimes).toEqual(res3.syncedTimes);
+			expect(res2.syncedTotal).toEqual(res3.syncedTotal);
+			expect(res2.unsyncedLastTotal).toEqual(res3.unsyncedLastTotal);
+			expect(res2.unsyncedTotal).toEqual(res3.unsyncedTotal);
 		});
 	});
 
@@ -899,7 +1111,7 @@ describe('/layer.ts', () => {
 					createChangeEvents({
 						count: 2
 					}),
-					'__INITIAL__'
+					0
 				),
 				// pk 1
 				layer.set(
@@ -907,7 +1119,7 @@ describe('/layer.ts', () => {
 						count: 2,
 						pk: 1
 					}),
-					'__INITIAL__'
+					0
 				)
 			]);
 		});
@@ -917,8 +1129,8 @@ describe('/layer.ts', () => {
 
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					cursor: '__INITIAL__',
-					pk: 'table-1#pk-0#__INITIAL__'
+					cursor: 0,
+					pk: 'table-1#pk-0#0'
 				},
 				limit: Infinity,
 				onChunk: expect.any(Function)
@@ -928,11 +1140,11 @@ describe('/layer.ts', () => {
 			expect(layer.db.batchDelete).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-001'
 					})
 				])
@@ -961,11 +1173,11 @@ describe('/layer.ts', () => {
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(['db-0', 'db-2', 'db-4', 'db-6', 'db-8']);
 		});
 
-		it('must reset without partition', async () => {
+		it('must reset without partition argument', async () => {
 			await layer.reset(db);
 
 			expect(layer.db.query).toHaveBeenCalledWith({
-				item: { cursor: '__INITIAL__' },
+				item: { cursor: 0 },
 				limit: Infinity,
 				onChunk: expect.any(Function)
 			});
@@ -979,19 +1191,19 @@ describe('/layer.ts', () => {
 			expect(layer.db.batchDelete).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-001'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#pk-1#__INITIAL__',
+						pk: 'table-1#pk-1#0',
 						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#pk-1#__INITIAL__',
+						pk: 'table-1#pk-1#0',
 						sk: 'sk-001'
 					})
 				])
@@ -1021,21 +1233,21 @@ describe('/layer.ts', () => {
 	describe('resolvePartition', () => {
 		it('should resolve partition with table and partition', () => {
 			const partition = 'pk-0';
-			const resolvedPartition = layer.resolvePartition('__INITIAL__', partition);
+			const resolvedPartition = layer.resolvePartition(0, partition);
 
-			expect(resolvedPartition).toEqual('table-1#pk-0#__INITIAL__');
+			expect(resolvedPartition).toEqual('table-1#pk-0#0');
 		});
 
 		it('should resolve partition with only table', () => {
-			const resolvedPartition = layer.resolvePartition('__INITIAL__');
+			const resolvedPartition = layer.resolvePartition(0);
 
-			expect(resolvedPartition).toEqual('table-1#__INITIAL__');
+			expect(resolvedPartition).toEqual('table-1#0');
 		});
 
 		it('should resolve partition with empty partition', () => {
-			const resolvedPartition = layer.resolvePartition('__INITIAL__', '');
+			const resolvedPartition = layer.resolvePartition(0, '');
 
-			expect(resolvedPartition).toEqual('table-1#__INITIAL__');
+			expect(resolvedPartition).toEqual('table-1#0');
 		});
 	});
 
@@ -1076,7 +1288,8 @@ describe('/layer.ts', () => {
 			await layer.set(events);
 
 			expect(layer.syncStrategy).toHaveBeenCalledWith({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -1089,37 +1302,37 @@ describe('/layer.ts', () => {
 			expect(layer.db.batchWrite).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						cursor: '__INITIAL__',
+						cursor: 0,
 						item: expect.objectContaining({
 							pk: 'pk-0',
 							sk: 'sk-000',
 							state: 'pending-000'
 						}),
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-000',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
-						cursor: '__INITIAL__',
+						cursor: 0,
 						item: expect.objectContaining({
 							pk: 'pk-0',
 							sk: 'sk-001',
 							state: 'pending-001'
 						}),
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-001',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
-						cursor: '__INITIAL__',
+						cursor: 0,
 						item: expect.objectContaining({
 							pk: 'pk-0',
 							sk: 'sk-002',
 							state: 'pending-002'
 						}),
-						pk: 'table-1#pk-0#__INITIAL__',
+						pk: 'table-1#pk-0#0',
 						sk: 'sk-002',
 						type: 'PUT',
 						ttl: expect.any(Number)
@@ -1138,7 +1351,8 @@ describe('/layer.ts', () => {
 			await layer.set(events);
 
 			expect(layer.syncStrategy).toHaveBeenCalledWith({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -1161,7 +1375,8 @@ describe('/layer.ts', () => {
 			await layer.set(events);
 
 			expect(layer.syncStrategy).toHaveBeenCalledWith({
-				cursor: '__INITIAL__',
+				cursor: 0,
+				cursorMax: 0,
 				loaded: true,
 				syncedLastTotal: 0,
 				syncedTimes: 0,
@@ -1182,21 +1397,21 @@ describe('/layer.ts', () => {
 						count: 4,
 						type: 'PUT'
 					}),
-					'__INITIAL__'
+					0
 				),
 				layer.set(
 					createChangeEvents({
 						count: 2,
 						type: 'DELETE'
 					}),
-					'2024-11-28T01:00:00.000Z'
+					1
 				),
 				layer.set(
 					createChangeEvents({
 						count: 4,
 						type: 'UPDATE'
 					}),
-					'2024-11-28T02:00:00.000Z'
+					2
 				),
 				// pk 1 (empty layer)
 				layer.set(
@@ -1205,7 +1420,7 @@ describe('/layer.ts', () => {
 						pk: 1,
 						type: 'PUT'
 					}),
-					'__INITIAL__'
+					0
 				),
 				layer.set(
 					createChangeEvents({
@@ -1213,7 +1428,7 @@ describe('/layer.ts', () => {
 						pk: 1,
 						type: 'DELETE'
 					}),
-					'2024-11-28T01:00:00.000Z'
+					1
 				)
 			]);
 		});
@@ -1246,13 +1461,18 @@ describe('/layer.ts', () => {
 
 			expect(layer.meta).toHaveBeenCalledTimes(3);
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: true, syncedTotal: 0, unsyncedTotal: 0 });
-			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: false, syncedTotal: 8, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 1, syncedTotal: 0, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 0, syncedTotal: 8, unsyncedTotal: 0 });
+
+			expect(layer.getter).toHaveBeenCalledTimes(2);
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-0');
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-1');
 
 			expect(layer.db.query).toHaveBeenCalledWith({
-				item: { cursor: '__INITIAL__' },
+				item: { cursor: 0, pk: 'table-1' },
 				limit: Infinity,
-				onChunk: expect.any(Function)
+				onChunk: expect.any(Function),
+				prefix: true
 			});
 
 			const setterArgs = vi
@@ -1294,20 +1514,25 @@ describe('/layer.ts', () => {
 		});
 
 		it('should sync on 2nd cursor', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: '2024-11-28T01:00:00.000Z' } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1 } as LayerMeta);
 
 			const res = await layer.sync();
 
 			expect(layer.meta).toHaveBeenCalledTimes(3);
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: true, syncedTotal: 0, unsyncedTotal: 0 });
-			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: false, syncedTotal: 4, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 1, syncedTotal: 0, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 0, syncedTotal: 4, unsyncedTotal: 0 });
 
 			expect(layer.db.query).toHaveBeenCalledWith({
-				item: { cursor: '2024-11-28T01:00:00.000Z' },
+				item: { cursor: 1, pk: 'table-1' },
 				limit: Infinity,
-				onChunk: expect.any(Function)
+				onChunk: expect.any(Function),
+				prefix: true
 			});
+
+			expect(layer.getter).toHaveBeenCalledTimes(2);
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-0');
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-1');
 
 			const setterArgs = vi
 				.mocked(layer.setter)
@@ -1334,20 +1559,24 @@ describe('/layer.ts', () => {
 		});
 
 		it('should sync on 3rd cursor', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: '2024-11-28T02:00:00.000Z' } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 2 } as LayerMeta);
 
 			const res = await layer.sync();
 
 			expect(layer.meta).toHaveBeenCalledTimes(3);
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: true, syncedTotal: 0, unsyncedTotal: 0 });
-			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: false, syncedTotal: 4, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 1, syncedTotal: 0, unsyncedTotal: 0 });
+			expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 0, syncedTotal: 4, unsyncedTotal: 0 });
 
 			expect(layer.db.query).toHaveBeenCalledWith({
-				item: { cursor: '2024-11-28T02:00:00.000Z' },
+				item: { cursor: 2, pk: 'table-1' },
 				limit: Infinity,
-				onChunk: expect.any(Function)
+				onChunk: expect.any(Function),
+				prefix: true
 			});
+
+			expect(layer.getter).toHaveBeenCalledOnce();
+			expect(layer.getter).toHaveBeenCalledWith('table-1#pk-0');
 
 			const setterArgs = vi
 				.mocked(layer.setter)
@@ -1361,7 +1590,7 @@ describe('/layer.ts', () => {
 					return a.partition.localeCompare(b.partition);
 				});
 
-			expect(layer.setter).toHaveBeenCalledTimes(1);
+			expect(layer.setter).toHaveBeenCalledOnce();
 			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
 
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(
@@ -1380,6 +1609,23 @@ describe('/layer.ts', () => {
 			expect(res).toEqual({
 				count: 4
 			});
+		});
+
+		it('should regress cursor on setter error', async () => {
+			vi.mocked(layer.setter).mockRejectedValue(new Error('setter error'));
+
+			try {
+				await layer.sync();
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect(err.message).toEqual('setter error');
+
+				expect(layer.meta).toHaveBeenCalledTimes(3);
+				expect(layer.meta).toHaveBeenCalledWith();
+				expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: 1, syncedTotal: 0, unsyncedTotal: 0 });
+				expect(layer.meta).toHaveBeenCalledWith({ advanceCursor: -1, syncedTotal: 0, unsyncedTotal: 0 });
+			}
 		});
 	});
 });
@@ -1428,7 +1674,7 @@ describe('/layer.ts (without partition)', () => {
 					createChangeEvents({
 						count: 2
 					}),
-					'__INITIAL__'
+					0
 				),
 				layer.set(
 					createChangeEvents({
@@ -1436,7 +1682,7 @@ describe('/layer.ts (without partition)', () => {
 						initialIndex: 2,
 						type: 'DELETE'
 					}),
-					'__INITIAL__'
+					0
 				)
 			]);
 		});
@@ -1460,7 +1706,7 @@ describe('/layer.ts (without partition)', () => {
 			});
 
 			vi.spyOn(layer, 'meta');
-			vi.spyOn(layer, 'mergePendingEvents');
+			vi.spyOn(layer, 'merge');
 			vi.spyOn(layer.db, 'query');
 		});
 
@@ -1468,10 +1714,11 @@ describe('/layer.ts (without partition)', () => {
 			const res = await layer.get();
 
 			expect(layer.meta).toHaveBeenCalledWith();
-			expect(layer.mergePendingEvents).toHaveBeenCalledWith('table-1#__INITIAL__', expect.any(Array));
+			expect(layer.getter).toHaveBeenCalledWith('table-1');
+			expect(layer.merge).toHaveBeenCalledWith(expect.any(Array), expect.any(Array));
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					pk: 'table-1#__INITIAL__'
+					pk: 'table-1#0'
 				},
 				limit: Infinity
 			});
@@ -1520,37 +1767,37 @@ describe('/layer.ts (without partition)', () => {
 			expect(layer.db.batchWrite).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						cursor: '__INITIAL__',
+						cursor: 0,
 						item: expect.objectContaining({
 							pk: 'pk-0',
 							sk: 'sk-000',
 							state: 'pending-000'
 						}),
-						pk: 'table-1#__INITIAL__',
+						pk: 'table-1#0',
 						sk: 'sk-000',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
-						cursor: '__INITIAL__',
+						cursor: 0,
 						item: expect.objectContaining({
 							pk: 'pk-0',
 							sk: 'sk-001',
 							state: 'pending-001'
 						}),
-						pk: 'table-1#__INITIAL__',
+						pk: 'table-1#0',
 						sk: 'sk-001',
 						type: 'PUT',
 						ttl: expect.any(Number)
 					}),
 					expect.objectContaining({
-						cursor: '__INITIAL__',
+						cursor: 0,
 						item: expect.objectContaining({
 							pk: 'pk-0',
 							sk: 'sk-002',
 							state: 'pending-002'
 						}),
-						pk: 'table-1#__INITIAL__',
+						pk: 'table-1#0',
 						sk: 'sk-002',
 						type: 'PUT',
 						ttl: expect.any(Number)
@@ -1600,7 +1847,7 @@ describe('/layer.ts (without partition)', () => {
 					createChangeEvents({
 						count: 2
 					}),
-					'__INITIAL__'
+					0
 				)
 			]);
 		});
@@ -1610,7 +1857,7 @@ describe('/layer.ts (without partition)', () => {
 
 			expect(layer.db.query).toHaveBeenCalledWith({
 				item: {
-					cursor: '__INITIAL__'
+					cursor: 0
 				},
 				limit: Infinity,
 				onChunk: expect.any(Function)
@@ -1620,11 +1867,11 @@ describe('/layer.ts (without partition)', () => {
 			expect(layer.db.batchDelete).toHaveBeenCalledWith(
 				expect.arrayContaining([
 					expect.objectContaining({
-						pk: 'table-1#__INITIAL__',
+						pk: 'table-1#0',
 						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#__INITIAL__',
+						pk: 'table-1#0',
 						sk: 'sk-001'
 					})
 				])
@@ -1661,7 +1908,7 @@ describe('/layer.ts (without partition)', () => {
 					createChangeEvents({
 						count: 2
 					}),
-					'__INITIAL__'
+					0
 				),
 				layer.set(
 					createChangeEvents({
@@ -1669,7 +1916,7 @@ describe('/layer.ts (without partition)', () => {
 						initialIndex: 2,
 						type: 'DELETE'
 					}),
-					'__INITIAL__'
+					0
 				)
 			]);
 		});
@@ -1700,10 +1947,13 @@ describe('/layer.ts (without partition)', () => {
 			const res = await layer.sync();
 
 			expect(layer.db.query).toHaveBeenCalledWith({
-				item: { cursor: '__INITIAL__' },
+				item: { cursor: 0, pk: 'table-1' },
 				limit: Infinity,
-				onChunk: expect.any(Function)
+				onChunk: expect.any(Function),
+				prefix: true
 			});
+
+			expect(layer.getter).toHaveBeenCalledWith('table-1');
 
 			const setterArgs = vi
 				.mocked(layer.setter)
