@@ -401,10 +401,6 @@ yarn test
 
 MIT © [Felipe Rohde](mailto:feliperohdee@gmail.com)
 
-## 🤝 Contributing
-
-Contributions, issues and feature requests are welcome! Feel free to check [issues page](https://github.com/yourusername/use-retry-fn/issues).
-
 ## ⭐ Show your support
 
 Give a ⭐️ if this project helped you!
