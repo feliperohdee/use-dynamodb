@@ -2,6 +2,10 @@
 
 A TypeScript library that provides a simplified interface for interacting with Amazon DynamoDB, using the AWS SDK v3.
 
+[![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vitest](https://img.shields.io/badge/-Vitest-729B1B?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ## 🚀 Features
 
 - ✅ Type-safe CRUD operations (Create, Read, Update, Delete)
@@ -392,6 +396,25 @@ yarn test
 - The library provides built-in retry strategy with exponential backoff
 - All timestamps are managed automatically (**createdAt, **updatedAt, \_\_ts)
 - Queries automatically handle pagination for large result sets
+
+## 📝 License
+
+MIT © [Felipe Rohde](mailto:feliperohdee@gmail.com)
+
+## 🤝 Contributing
+
+Contributions, issues and feature requests are welcome! Feel free to check [issues page](https://github.com/yourusername/use-retry-fn/issues).
+
+## ⭐ Show your support
+
+Give a ⭐️ if this project helped you!
+
+## 👨‍💻 Author
+
+**Felipe Rohde**
+* Twitter: [@felipe_rohde](https://twitter.com/felipe_rohde)
+* Github: [@feliperohdee](https://github.com/feliperohdee)
+* Email: feliperohdee@gmail.com
 
 ## 🙏 Acknowledgements
 
