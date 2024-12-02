@@ -370,9 +370,10 @@ Give a ⭐️ if this project helped you!
 ## 👨‍💻 Author
 
 **Felipe Rohde**
-* Twitter: [@felipe_rohde](https://twitter.com/felipe_rohde)
-* Github: [@feliperohdee](https://github.com/feliperohdee)
-* Email: feliperohdee@gmail.com
+
+- Twitter: [@felipe_rohde](https://twitter.com/felipe_rohde)
+- Github: [@feliperohdee](https://github.com/feliperohdee)
+- Email: feliperohdee@gmail.com
 
 ## 🙏 Acknowledgements
 

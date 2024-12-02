@@ -1,57 +1,59 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 
-import type Db from './index';
-import type { ChangeEvent, ChangeType, Dict, PersistedItem, TableGSI } from './index';
+import type Dynamodb from './index';
+import type { Dict } from './index';
 
-type LayerMeta = {
-	cursor: number;
-	cursorMax: number;
-	loaded: boolean;
-	syncedLastTotal: number;
-	syncedTimes: number;
-	syncedTotal: number;
-	unsyncedLastTotal: number;
-	unsyncedTotal: number;
-};
+namespace Layer {
+	export type Meta = {
+		cursor: number;
+		cursorMax: number;
+		loaded: boolean;
+		syncedLastTotal: number;
+		syncedTimes: number;
+		syncedTotal: number;
+		unsyncedLastTotal: number;
+		unsyncedTotal: number;
+	};
 
-type LayerGetter<T extends PersistedItem> = (partition: string) => Promise<T[]>;
-type LayerSetter<T extends PersistedItem> = (partition: string, value: T[]) => Promise<void>;
-type LayerPendingEvent<T extends Dict = Dict> = {
-	cursor: number;
-	item: PersistedItem<T>;
-	pk: string;
-	sk: string;
-	ttl: number;
-	type: ChangeType;
-};
+	export type Getter<T extends Dynamodb.PersistedItem> = (partition: string) => Promise<T[]>;
+	export type Setter<T extends Dynamodb.PersistedItem> = (partition: string, value: T[]) => Promise<void>;
+	export type PendingEvent<T extends Dict = Dict> = {
+		cursor: number;
+		item: Dynamodb.PersistedItem<T>;
+		pk: string;
+		sk: string;
+		ttl: number;
+		type: Dynamodb.ChangeType;
+	};
+}
 
 const FIVE_DAYS_IN_SECONDS = 5 * 24 * 60 * 60;
 const LOCK_TTL_IN_SECONDS = 5 * 60;
 
 class Layer<T extends Dict = Dict> {
 	public backgroundRunner?: (promise: Promise<void>) => void;
-	public db: Db<LayerPendingEvent<T>>;
-	public getter: LayerGetter<PersistedItem<T>>;
-	public setter: LayerSetter<PersistedItem<T>>;
-	public syncStrategy?: (meta: LayerMeta) => boolean;
+	public db: Dynamodb<Layer.PendingEvent<T>>;
+	public getter: Layer.Getter<Dynamodb.PersistedItem<T>>;
+	public setter: Layer.Setter<Dynamodb.PersistedItem<T>>;
+	public syncStrategy?: (meta: Layer.Meta) => boolean;
 
-	private currentMeta: LayerMeta;
-	private getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
-	private getItemPartition: (item: PersistedItem<T>) => string;
+	private currentMeta: Layer.Meta;
+	private getItemUniqueIdentifier: (item: Dynamodb.PersistedItem<T>) => string;
+	private getItemPartition: (item: Dynamodb.PersistedItem<T>) => string;
 	private table: string;
-	private ttl: (item: PersistedItem<T>) => number;
+	private ttl: (item: Dynamodb.PersistedItem<T>) => number;
 
 	constructor(options: {
 		backgroundRunner?: () => Promise<void>;
-		db: Db<LayerPendingEvent<T>>;
-		getItemPartition?: (item: PersistedItem<T>) => string;
-		getItemUniqueIdentifier: (item: PersistedItem<T>) => string;
-		getter: LayerGetter<PersistedItem<T>>;
-		setter: LayerSetter<PersistedItem<T>>;
-		syncStrategy?: (meta: LayerMeta) => boolean;
+		db: Dynamodb<Layer.PendingEvent<T>>;
+		getItemPartition?: (item: Dynamodb.PersistedItem<T>) => string;
+		getItemUniqueIdentifier: (item: Dynamodb.PersistedItem<T>) => string;
+		getter: Layer.Getter<Dynamodb.PersistedItem<T>>;
+		setter: Layer.Setter<Dynamodb.PersistedItem<T>>;
+		syncStrategy?: (meta: Layer.Meta) => boolean;
 		table: string;
-		ttl?: number | ((item: PersistedItem<T>) => number);
+		ttl?: number | ((item: Dynamodb.PersistedItem<T>) => number);
 	}) {
 		this.currentMeta = {
 			cursor: 0,
@@ -88,7 +90,7 @@ class Layer<T extends Dict = Dict> {
 			throw new Error('Dynamodb schema sort key must be sk');
 		}
 
-		const cursorGSI = _.find(this.db.indexes, (index: TableGSI) => {
+		const cursorGSI = _.find(this.db.indexes, (index: Dynamodb.TableGSI) => {
 			return index.partition === 'cursor' && index.partitionType === 'N' && index.sort === 'pk' && index.sortType === 'S';
 		});
 
@@ -97,7 +99,7 @@ class Layer<T extends Dict = Dict> {
 		}
 	}
 
-	async meta(set?: { advanceCursor: 1 | 0 | -1; unsyncedTotal: number; syncedTotal: number }): Promise<LayerMeta> {
+	async meta(set?: { advanceCursor: 1 | 0 | -1; unsyncedTotal: number; syncedTotal: number }): Promise<Layer.Meta> {
 		if (set) {
 			if (set.syncedTotal > 0 && set.unsyncedTotal > 0) {
 				throw new Error('Cannot set both syncedTotal and unsyncedTotal at the same time');
@@ -190,7 +192,7 @@ class Layer<T extends Dict = Dict> {
 			}
 
 			try {
-				const meta = await this.db.update<LayerMeta>({
+				const meta = await this.db.update<Layer.Meta>({
 					conditionExpression: update.conditionExpression,
 					filter: {
 						item: { pk: `__${this.table}__`, sk: '__meta__' }
@@ -229,7 +231,7 @@ class Layer<T extends Dict = Dict> {
 				throw err;
 			}
 		} else if (!this.currentMeta.loaded) {
-			const res = await this.db.get<LayerMeta>({
+			const res = await this.db.get<Layer.Meta>({
 				consistentRead: true,
 				item: { pk: `__${this.table}__`, sk: '__meta__' }
 			});
@@ -243,10 +245,10 @@ class Layer<T extends Dict = Dict> {
 			}
 		}
 
-		return _.omit(this.currentMeta, ['pk', 'sk', '__createdAt', '__ts', '__updatedAt']) as LayerMeta;
+		return _.omit(this.currentMeta, ['pk', 'sk', '__createdAt', '__ts', '__updatedAt']) as Layer.Meta;
 	}
 
-	async get(partition?: string, sorted = true): Promise<PersistedItem<T>[]> {
+	async get(partition?: string, sorted = true): Promise<Dynamodb.PersistedItem<T>[]> {
 		const { cursor, cursorMax } = await this.meta();
 		const pks = _.map(_.range(cursor, cursorMax + 1), cursor => {
 			return this.resolvePartition(cursor, partition);
@@ -309,7 +311,10 @@ class Layer<T extends Dict = Dict> {
 		return true; // Lock released
 	}
 
-	merge(layerItems: PersistedItem<T>[], pendingEvents: PersistedItem<LayerPendingEvent<T>>[]): PersistedItem<T>[] {
+	merge(
+		layerItems: Dynamodb.PersistedItem<T>[],
+		pendingEvents: Dynamodb.PersistedItem<Layer.PendingEvent<T>>[]
+	): Dynamodb.PersistedItem<T>[] {
 		const mostRecentPendingEvents = _(pendingEvents)
 			.groupBy(({ item }) => {
 				return this.getItemUniqueIdentifier(item);
@@ -344,10 +349,10 @@ class Layer<T extends Dict = Dict> {
 		return _.values(newItemsDict);
 	}
 
-	async reset(db: Db<T>, partition?: string) {
+	async reset(db: Dynamodb<T>, partition?: string) {
 		const { cursor } = await this.meta();
 		const pk = this.resolvePartition(cursor, partition);
-		const pendingEvents: Record<string, PersistedItem<T>[]> = {};
+		const pendingEvents: Record<string, Dynamodb.PersistedItem<T>[]> = {};
 
 		// first clean up pending events
 		await this.db.query({
@@ -392,7 +397,7 @@ class Layer<T extends Dict = Dict> {
 		return _.compact([this.table, _.trim(partition), `${cursor}`]).join('#');
 	}
 
-	async set(events: ChangeEvent<T>[], cursor?: number) {
+	async set(events: Dynamodb.ChangeEvent<T>[], cursor?: number) {
 		if (!_.size(events)) {
 			return;
 		}
@@ -414,7 +419,7 @@ class Layer<T extends Dict = Dict> {
 				throw new Error('Item must have an unique identifier');
 			}
 
-			const pendingItem: LayerPendingEvent<T> = {
+			const pendingItem: Layer.PendingEvent<T> = {
 				cursor,
 				item,
 				pk,
@@ -469,7 +474,7 @@ class Layer<T extends Dict = Dict> {
 				unsyncedTotal: 0
 			});
 
-			const pendingEvents: Record<string, PersistedItem<LayerPendingEvent<T>>[]> = {};
+			const pendingEvents: Record<string, Dynamodb.PersistedItem<Layer.PendingEvent<T>>[]> = {};
 			const { count } = await this.db.query({
 				item: { cursor, pk: this.table },
 				limit: Infinity,
@@ -522,5 +527,4 @@ class Layer<T extends Dict = Dict> {
 	}
 }
 
-export { LayerMeta, LayerPendingEvent };
 export default Layer;

@@ -1,8 +1,8 @@
-import _, { curry } from 'lodash';
+import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
-import Db, { ChangeEvent, ChangeType, PersistedItem } from './index';
-import Layer, { LayerMeta, LayerPendingEvent } from './layer';
+import Dynamodb from './index';
+import Layer from './layer';
 
 type Item = {
 	pk: string;
@@ -10,7 +10,7 @@ type Item = {
 	state: string;
 };
 
-const createItem = (options: { index: number; pk?: number; state?: string; ts?: number }): PersistedItem<Item> => {
+const createItem = (options: { index: number; pk?: number; state?: string; ts?: number }): Dynamodb.PersistedItem<Item> => {
 	const { index, pk = 0, state = 'pending', ts = _.now() } = options;
 	const nowISO = new Date(ts).toISOString();
 	const indexString = _.padStart(`${index}`, 3, '0');
@@ -32,8 +32,8 @@ const createChangeEvents = (options: {
 	state?: string;
 	table?: string;
 	ts?: number;
-	type?: ChangeType;
-}): ChangeEvent<Item>[] => {
+	type?: Dynamodb.ChangeType;
+}): Dynamodb.ChangeEvent<Item>[] => {
 	return _.times(options.count, index => {
 		const { initialIndex = 0, pk = 0, state = 'pending', table = 'table-1', ts = _.now(), type = 'PUT' } = options || {};
 
@@ -46,7 +46,7 @@ const createChangeEvents = (options: {
 			ts
 		});
 
-		const event: ChangeEvent<Item> = {
+		const event: Dynamodb.ChangeEvent<Item> = {
 			item,
 			partition: item.pk,
 			sort: item.sk,
@@ -71,7 +71,7 @@ const factory = async ({
 	setter: Mock;
 	syncStrategy: Mock;
 }) => {
-	const db = new Db<LayerPendingEvent<Item>>({
+	const db = new Dynamodb<Layer.PendingEvent<Item>>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
 		indexes: [
 			{
@@ -333,7 +333,7 @@ describe('/layer.ts', () => {
 		});
 
 		it('should returns on cursor', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1, cursorMax: 1 } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1, cursorMax: 1 } as Layer.Meta);
 
 			const res = await layer.get('pk-0');
 
@@ -413,7 +413,7 @@ describe('/layer.ts', () => {
 		});
 
 		it('should returns on multiple cursors', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: 0, cursorMax: 1 } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 0, cursorMax: 1 } as Layer.Meta);
 
 			const res = await layer.get('pk-0');
 
@@ -537,7 +537,7 @@ describe('/layer.ts', () => {
 					state: 'pending-cursor-0'
 				});
 
-				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+				const pendingEvent: Dynamodb.PersistedItem<Layer.PendingEvent<Item>> = {
 					__createdAt: '',
 					__updatedAt: '',
 					__ts: now,
@@ -558,7 +558,7 @@ describe('/layer.ts', () => {
 					state: 'pending-cursor-1'
 				});
 
-				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+				const pendingEvent: Dynamodb.PersistedItem<Layer.PendingEvent<Item>> = {
 					__createdAt: '',
 					__updatedAt: '',
 					__ts: now + (index % 2 ? 1000 : -1000),
@@ -627,7 +627,7 @@ describe('/layer.ts', () => {
 					state: 'pending-cursor-0'
 				});
 
-				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+				const pendingEvent: Dynamodb.PersistedItem<Layer.PendingEvent<Item>> = {
 					__createdAt: '',
 					__updatedAt: '',
 					__ts: now,
@@ -648,7 +648,7 @@ describe('/layer.ts', () => {
 					state: 'pending-cursor-1'
 				});
 
-				const pendingEvent: PersistedItem<LayerPendingEvent<Item>> = {
+				const pendingEvent: Dynamodb.PersistedItem<Layer.PendingEvent<Item>> = {
 					__createdAt: '',
 					__updatedAt: '',
 					__ts: now + (index % 2 ? 1000 : -1000),
@@ -1164,10 +1164,10 @@ describe('/layer.ts', () => {
 	});
 
 	describe('reset', () => {
-		let db: Db<Item>;
+		let db: Dynamodb<Item>;
 
 		beforeAll(async () => {
-			db = new Db<Item>({
+			db = new Dynamodb<Item>({
 				accessKeyId: process.env.AWS_ACCESS_KEY || '',
 				region: 'us-east-1',
 				schema: { partition: 'pk', sort: 'sk' },
@@ -1630,7 +1630,7 @@ describe('/layer.ts', () => {
 		});
 
 		it('should sync on 2nd cursor', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1 } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 1 } as Layer.Meta);
 
 			const res = await layer.sync();
 
@@ -1679,7 +1679,7 @@ describe('/layer.ts', () => {
 		});
 
 		it('should sync on 3rd cursor', async () => {
-			vi.mocked(layer.meta).mockResolvedValue({ cursor: 2 } as LayerMeta);
+			vi.mocked(layer.meta).mockResolvedValue({ cursor: 2 } as Layer.Meta);
 
 			const res = await layer.sync();
 
@@ -1935,10 +1935,10 @@ describe('/layer.ts (without partition)', () => {
 	});
 
 	describe('reset', () => {
-		let db: Db<Item>;
+		let db: Dynamodb<Item>;
 
 		beforeAll(async () => {
-			db = new Db<Item>({
+			db = new Dynamodb<Item>({
 				accessKeyId: process.env.AWS_ACCESS_KEY || '',
 				region: 'us-east-1',
 				schema: { partition: 'pk', sort: 'sk' },
