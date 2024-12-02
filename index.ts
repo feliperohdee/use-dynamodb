@@ -51,7 +51,7 @@ namespace Dynamodb {
 		type: ChangeType;
 	};
 
-	export type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void>;
+	export type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void> | void;
 	export type TableSchema = { partition: string; sort?: string };
 	export type TableGSI = {
 		name: string;
@@ -98,13 +98,13 @@ class Dynamodb<T extends Dict = Dict> {
 	public indexes: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
 	public schema: Dynamodb.TableSchema;
 
-	private onChange: Dynamodb.OnChange | null;
+	private onChange: Dynamodb.OnChange<T> | null;
 	private table: string;
 
 	constructor(options: {
 		accessKeyId: string;
 		indexes?: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
-		onChange?: Dynamodb.OnChange;
+		onChange?: Dynamodb.OnChange<T>;
 		region: string;
 		retryTimes?: number;
 		retryStrategy?: (attempt: number) => number;
@@ -407,7 +407,7 @@ class Dynamodb<T extends Dict = Dict> {
 			return;
 		}
 
-		await this.onChange(events);
+		await this.onChange(events as Dynamodb.ChangeEvent<T>[]);
 	}
 
 	async put<R extends Dict = T>(

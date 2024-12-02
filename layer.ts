@@ -17,7 +17,7 @@ namespace Layer {
 	};
 
 	export type Getter<T extends Dynamodb.PersistedItem> = (partition: string) => Promise<T[]>;
-	export type Setter<T extends Dynamodb.PersistedItem> = (partition: string, value: T[]) => Promise<void>;
+	export type Setter<T extends Dynamodb.PersistedItem> = (partition: string, items: T[]) => Promise<void>;
 	export type PendingEvent<T extends Dict = Dict> = {
 		cursor: number;
 		item: Dynamodb.PersistedItem<T>;
