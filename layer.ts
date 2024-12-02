@@ -30,6 +30,16 @@ namespace Layer {
 
 const FIVE_DAYS_IN_SECONDS = 5 * 24 * 60 * 60;
 const LOCK_TTL_IN_SECONDS = 5 * 60;
+const DEFAULT_CURRENT_META = {
+	cursor: 0,
+	cursorMax: 0,
+	loaded: false,
+	syncedLastTotal: 0,
+	syncedTimes: 0,
+	syncedTotal: 0,
+	unsyncedLastTotal: 0,
+	unsyncedTotal: 0
+};
 
 class Layer<T extends Dict = Dict> {
 	public backgroundRunner?: (promise: Promise<void>) => void;
@@ -45,7 +55,7 @@ class Layer<T extends Dict = Dict> {
 	private ttl: (item: Dynamodb.PersistedItem<T>) => number;
 
 	constructor(options: {
-		backgroundRunner?: () => Promise<void>;
+		backgroundRunner?: (promise: Promise<void>) => void;
 		db: Dynamodb<Layer.PendingEvent<T>>;
 		getItemPartition?: (item: Dynamodb.PersistedItem<T>) => string;
 		getItemUniqueIdentifier: (item: Dynamodb.PersistedItem<T>) => string;
@@ -55,16 +65,7 @@ class Layer<T extends Dict = Dict> {
 		table: string;
 		ttl?: number | ((item: Dynamodb.PersistedItem<T>) => number);
 	}) {
-		this.currentMeta = {
-			cursor: 0,
-			cursorMax: 0,
-			loaded: false,
-			syncedLastTotal: 0,
-			syncedTimes: 0,
-			syncedTotal: 0,
-			unsyncedLastTotal: 0,
-			unsyncedTotal: 0
-		};
+		this.currentMeta = DEFAULT_CURRENT_META;
 		this.backgroundRunner = options.backgroundRunner;
 		this.db = options.db;
 		this.getItemUniqueIdentifier = options.getItemUniqueIdentifier;
@@ -350,47 +351,74 @@ class Layer<T extends Dict = Dict> {
 	}
 
 	async reset(db: Dynamodb<T>, partition?: string) {
-		const { cursor } = await this.meta();
-		const pk = this.resolvePartition(cursor, partition);
-		const pendingEvents: Record<string, Dynamodb.PersistedItem<T>[]> = {};
+		const lock = await this.acquireLock(true);
 
-		// first clean up pending events
-		await this.db.query({
-			item: partition ? { cursor, pk } : { cursor },
-			limit: Infinity,
-			onChunk: async ({ items }) => {
-				await this.db.batchDelete(items);
-			}
-		});
-
-		const { count } = await db.scan({
-			limit: Infinity,
-			onChunk: async ({ items }) => {
-				for (const item of items) {
-					const itemPartition = this.getItemPartition(item);
-
-					if (partition && itemPartition !== partition) {
-						continue;
-					}
-
-					const pk = this.resolvePartition(cursor, itemPartition);
-
-					if (!pendingEvents[pk]) {
-						pendingEvents[pk] = [];
-					}
-
-					pendingEvents[pk] = [...pendingEvents[pk], item];
-				}
-			}
-		});
-
-		for (const pk in pendingEvents) {
-			await this.setter(pk.replace(`#${cursor}`, ''), pendingEvents[pk]);
+		if (!lock) {
+			return {
+				count: 0,
+				locked: true
+			};
 		}
 
-		return {
-			count
-		};
+		try {
+			const pendingEvents: Record<string, Dynamodb.PersistedItem<T>[]> = {};
+
+			// first clean up pending events
+			await this.db.scan({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': partition ? `${this.table}#${partition}` : this.table },
+				filterExpression: 'begins_with(#pk, :pk)',
+				limit: Infinity,
+				onChunk: async ({ items }) => {
+					await this.db.batchDelete(items);
+				}
+			});
+
+			await this.resetMeta();
+
+			const { count } = await db.scan({
+				limit: Infinity,
+				onChunk: async ({ items }) => {
+					for (const item of items) {
+						const itemPartition = this.getItemPartition(item);
+
+						if (partition && itemPartition !== partition) {
+							continue;
+						}
+
+						// cursor was resetted to 0
+						const pk = this.resolvePartition(0, itemPartition);
+
+						if (!pendingEvents[pk]) {
+							pendingEvents[pk] = [];
+						}
+
+						pendingEvents[pk] = [...pendingEvents[pk], item];
+					}
+				}
+			});
+
+			for (const pk in pendingEvents) {
+				await this.setter(pk.replace('#0', ''), pendingEvents[pk]);
+			}
+
+			return {
+				count,
+				locked: false
+			};
+		} finally {
+			await this.acquireLock(false);
+		}
+	}
+
+	async resetMeta() {
+		await this.db.delete({
+			filter: {
+				item: { pk: `__${this.table}__`, sk: '__meta__' }
+			}
+		});
+
+		this.currentMeta = DEFAULT_CURRENT_META;
 	}
 
 	resolvePartition(cursor: number, partition?: string) {
@@ -527,4 +555,5 @@ class Layer<T extends Dict = Dict> {
 	}
 }
 
+export { DEFAULT_CURRENT_META };
 export default Layer;

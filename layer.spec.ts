@@ -2,7 +2,7 @@ import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Dynamodb from './index';
-import Layer from './layer';
+import Layer, { DEFAULT_CURRENT_META } from './layer';
 
 type Item = {
 	pk: string;
@@ -1193,9 +1193,11 @@ describe('/layer.ts', () => {
 
 		beforeEach(async () => {
 			vi.spyOn(db, 'scan');
+			vi.spyOn(layer, 'acquireLock');
+			vi.spyOn(layer, 'resetMeta');
 			vi.spyOn(layer, 'setter');
 			vi.spyOn(layer.db, 'batchDelete');
-			vi.spyOn(layer.db, 'query');
+			vi.spyOn(layer.db, 'scan');
 
 			await Promise.all([
 				// pk 0
@@ -1211,19 +1213,35 @@ describe('/layer.ts', () => {
 						count: 2,
 						pk: 1
 					}),
-					0
+					1
 				)
 			]);
+		});
+
+		it('should not reset if locked', async () => {
+			vi.mocked(layer.acquireLock).mockResolvedValue(false);
+
+			const res = await layer.reset(db);
+
+			expect(layer.acquireLock).toHaveBeenCalledOnce();
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+
+			expect(res).toEqual({
+				count: 0,
+				locked: true
+			});
 		});
 
 		it('must reset', async () => {
 			await layer.reset(db, 'pk-0');
 
-			expect(layer.db.query).toHaveBeenCalledWith({
-				item: {
-					cursor: 0,
-					pk: 'table-1#pk-0#0'
-				},
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+			expect(layer.acquireLock).toHaveBeenCalledWith(false);
+
+			expect(layer.db.scan).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'table-1#pk-0' },
+				filterExpression: 'begins_with(#pk, :pk)',
 				limit: Infinity,
 				onChunk: expect.any(Function)
 			});
@@ -1242,6 +1260,7 @@ describe('/layer.ts', () => {
 				])
 			);
 
+			expect(layer.resetMeta).toHaveBeenCalled();
 			expect(db.scan).toHaveBeenCalledWith({
 				limit: Infinity,
 				onChunk: expect.any(Function)
@@ -1261,20 +1280,20 @@ describe('/layer.ts', () => {
 
 			expect(layer.setter).toHaveBeenCalledOnce();
 			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
-
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(['db-0', 'db-2', 'db-4', 'db-6', 'db-8']);
+			expect(await layer.meta()).toEqual(DEFAULT_CURRENT_META);
 		});
 
 		it('must reset without partition argument', async () => {
 			await layer.reset(db);
 
-			expect(layer.db.query).toHaveBeenCalledWith({
-				item: { cursor: 0 },
-				limit: Infinity,
-				onChunk: expect.any(Function)
-			});
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+			expect(layer.acquireLock).toHaveBeenCalledWith(false);
 
-			expect(db.scan).toHaveBeenCalledWith({
+			expect(layer.db.scan).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'table-1' },
+				filterExpression: 'begins_with(#pk, :pk)',
 				limit: Infinity,
 				onChunk: expect.any(Function)
 			});
@@ -1291,15 +1310,21 @@ describe('/layer.ts', () => {
 						sk: 'sk-001'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#pk-1#0',
+						pk: 'table-1#pk-1#1',
 						sk: 'sk-000'
 					}),
 					expect.objectContaining({
-						pk: 'table-1#pk-1#0',
+						pk: 'table-1#pk-1#1',
 						sk: 'sk-001'
 					})
 				])
 			);
+
+			expect(layer.resetMeta).toHaveBeenCalled();
+			expect(db.scan).toHaveBeenCalledWith({
+				limit: Infinity,
+				onChunk: expect.any(Function)
+			});
 
 			const setterArgs = vi
 				.mocked(layer.setter)
@@ -1316,9 +1341,29 @@ describe('/layer.ts', () => {
 			expect(layer.setter).toHaveBeenCalledTimes(2);
 			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-0', expect.any(Array));
 			expect(layer.setter).toHaveBeenCalledWith('table-1#pk-1', expect.any(Array));
-
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(['db-0', 'db-2', 'db-4', 'db-6', 'db-8']);
 			expect(_.map(setterArgs[1].items, 'state')).toEqual(['db-1', 'db-3', 'db-5', 'db-7', 'db-9']);
+			expect(await layer.meta()).toEqual(DEFAULT_CURRENT_META);
+		});
+	});
+
+	describe('resetMeta', () => {
+		beforeAll(async () => {
+			await layer.meta({
+				advanceCursor: 1,
+				syncedTotal: 10,
+				unsyncedTotal: 0
+			});
+		});
+
+		afterAll(async () => {
+			await layer.db.clear();
+		});
+
+		it('should reset meta', async () => {
+			await layer.resetMeta();
+
+			expect(await layer.meta()).toEqual(DEFAULT_CURRENT_META);
 		});
 	});
 
@@ -1550,7 +1595,7 @@ describe('/layer.ts', () => {
 			});
 		});
 
-		it('should not sync if already syncing', async () => {
+		it('should not sync if locked', async () => {
 			vi.mocked(layer.acquireLock).mockResolvedValue(false);
 
 			const res = await layer.sync();
@@ -1558,8 +1603,6 @@ describe('/layer.ts', () => {
 			expect(layer.acquireLock).toHaveBeenCalledOnce();
 			expect(layer.acquireLock).toHaveBeenCalledWith(true);
 
-			expect(layer.meta).not.toHaveBeenCalled();
-			expect(layer.db.query).not.toHaveBeenCalled();
 			expect(layer.setter).not.toHaveBeenCalled();
 
 			expect(res).toEqual({
@@ -1964,9 +2007,11 @@ describe('/layer.ts (without partition)', () => {
 
 		beforeEach(async () => {
 			vi.spyOn(db, 'scan');
+			vi.spyOn(layer, 'acquireLock');
+			vi.spyOn(layer, 'resetMeta');
 			vi.spyOn(layer, 'setter');
 			vi.spyOn(layer.db, 'batchDelete');
-			vi.spyOn(layer.db, 'query');
+			vi.spyOn(layer.db, 'scan');
 
 			await Promise.all([
 				// pk 0
@@ -1982,10 +2027,13 @@ describe('/layer.ts (without partition)', () => {
 		it('must reset', async () => {
 			await layer.reset(db);
 
-			expect(layer.db.query).toHaveBeenCalledWith({
-				item: {
-					cursor: 0
-				},
+			expect(layer.acquireLock).toHaveBeenCalledWith(true);
+			expect(layer.acquireLock).toHaveBeenCalledWith(false);
+
+			expect(layer.db.scan).toHaveBeenCalledWith({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'table-1' },
+				filterExpression: 'begins_with(#pk, :pk)',
 				limit: Infinity,
 				onChunk: expect.any(Function)
 			});
@@ -2004,6 +2052,7 @@ describe('/layer.ts (without partition)', () => {
 				])
 			);
 
+			expect(layer.resetMeta).toHaveBeenCalled();
 			expect(db.scan).toHaveBeenCalledWith({
 				limit: Infinity,
 				onChunk: expect.any(Function)
@@ -2023,8 +2072,8 @@ describe('/layer.ts (without partition)', () => {
 
 			expect(layer.setter).toHaveBeenCalledOnce();
 			expect(layer.setter).toHaveBeenCalledWith('table-1', expect.any(Array));
-
 			expect(_.map(setterArgs[0].items, 'state')).toEqual(expect.arrayContaining(['db-0', 'db-1', 'db-2', 'db-3', 'db-4']));
+			expect(await layer.meta()).toEqual(DEFAULT_CURRENT_META);
 		});
 	});
 
