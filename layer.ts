@@ -1,5 +1,6 @@
 import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
+import { promiseAll } from 'use-async-helpers';
 
 import type Dynamodb from './index';
 import type { Dict } from './index';
@@ -51,6 +52,7 @@ class Layer<T extends Dict = Dict> {
 	private currentMeta: Layer.Meta;
 	private getItemUniqueIdentifier: (item: Dynamodb.PersistedItem<T>) => string;
 	private getItemPartition: (item: Dynamodb.PersistedItem<T>) => string;
+	private maxParallelConcurrency: number;
 	private table: string;
 	private ttl: (item: Dynamodb.PersistedItem<T>) => number;
 
@@ -60,6 +62,7 @@ class Layer<T extends Dict = Dict> {
 		getItemPartition?: (item: Dynamodb.PersistedItem<T>) => string;
 		getItemUniqueIdentifier: (item: Dynamodb.PersistedItem<T>) => string;
 		getter: Layer.Getter<Dynamodb.PersistedItem<T>>;
+		maxParallelConcurrency?: number;
 		setter: Layer.Setter<Dynamodb.PersistedItem<T>>;
 		syncStrategy?: (meta: Layer.Meta) => boolean;
 		table: string;
@@ -71,6 +74,7 @@ class Layer<T extends Dict = Dict> {
 		this.getItemUniqueIdentifier = options.getItemUniqueIdentifier;
 		this.getItemPartition = options.getItemPartition ?? (() => '');
 		this.getter = options.getter;
+		this.maxParallelConcurrency = options.maxParallelConcurrency ?? 4;
 		this.setter = options.setter;
 		this.syncStrategy = options.syncStrategy;
 		this.table = options.table;
@@ -255,15 +259,18 @@ class Layer<T extends Dict = Dict> {
 			return this.resolvePartition(cursor, partition);
 		});
 
-		const pendingEvents = await Promise.all(
-			_.map(pks, async pk => {
-				const res = await this.db.query({
-					item: { pk },
-					limit: Infinity
-				});
+		const pendingEvents = await promiseAll(
+			_.map(pks, (pk, i) => {
+				return async () => {
+					const res = await this.db.query({
+						item: { pk },
+						limit: Infinity
+					});
 
-				return res.items;
-			})
+					return res.items;
+				};
+			}),
+			this.maxParallelConcurrency
 		);
 
 		const pkWithoutCursor = pks[0].replace(`#${cursor}`, '');

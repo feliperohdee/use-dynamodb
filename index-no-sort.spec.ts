@@ -31,7 +31,7 @@ const factory = () => {
 				name: 'gs-index',
 				partition: 'gsiPk',
 				sort: 'gsiSk',
-				type: 'S'
+				sortType: 'S'
 			}
 		],
 		schema: { partition: 'pk' },
