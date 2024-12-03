@@ -3,7 +3,7 @@
 		"@aws-sdk/client-dynamodb": "^3.675.0",
 		"@aws-sdk/lib-dynamodb": "^3.675.0",
 		"lodash": "^4.17.21",
-		"use-async-helpers": "^1.0.3"
+		"use-async-helpers": "^1.0.14"
 	},
 	"devDependencies": {
 		"@types/lodash": "^4.17.12",
@@ -29,5 +29,5 @@
 		"test": "vitest"
 	},
 	"type": "module",
-	"version": "1.0.17"
+	"version": "1.0.18"
 }
