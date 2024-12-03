@@ -1186,5 +1186,6 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
+export type { Layer as DynamodbLayer };
 export { Dict };
 export default Dynamodb;
