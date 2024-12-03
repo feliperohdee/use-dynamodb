@@ -25,9 +25,9 @@
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.json",
 		"lint": "prettier --write . && yarn tsc",
-		"npm-publish": "./.test.sh --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
-		"test": "vitest"
+		"npm-publish": "yarn test --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
+		"test": "./.test.sh"
 	},
 	"type": "module",
-	"version": "1.0.18"
+	"version": "1.0.19"
 }

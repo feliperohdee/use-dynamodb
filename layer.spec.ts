@@ -71,22 +71,14 @@ const factory = async ({
 	setter: Mock;
 	syncStrategy: Mock;
 }) => {
-	const db = new Dynamodb<Layer.PendingEvent<Item>>({
-		accessKeyId: process.env.AWS_ACCESS_KEY || '',
-		indexes: [
-			{
-				name: 'cursor-index',
-				partition: 'cursor',
-				partitionType: 'N',
-				sort: 'pk',
-				sortType: 'S'
-			}
-		],
-		region: 'us-east-1',
-		secretAccessKey: process.env.AWS_SECRET_KEY || '',
-		schema: { partition: 'pk', sort: 'sk' },
-		table: 'use-dynamodb-layer-spec'
-	});
+	const db = new Dynamodb<Layer.PendingEvent<Item>>(
+		Layer.tableOptions({
+			accessKeyId: process.env.AWS_ACCESS_KEY || '',
+			region: 'us-east-1',
+			secretAccessKey: process.env.AWS_SECRET_KEY || '',
+			table: 'use-dynamodb-layer-spec'
+		})
+	);
 
 	if (createTable) {
 		await db.createTable();

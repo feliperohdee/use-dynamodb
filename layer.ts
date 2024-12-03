@@ -42,7 +42,38 @@ const DEFAULT_CURRENT_META = {
 	unsyncedTotal: 0
 };
 
+const layerTableOptions = ({
+	accessKeyId,
+	region,
+	secretAccessKey,
+	table
+}: {
+	accessKeyId: string;
+	region: string;
+	secretAccessKey: string;
+	table: string;
+}) => {
+	return {
+		accessKeyId,
+		indexes: [
+			{
+				name: 'cursor-index',
+				partition: 'cursor',
+				partitionType: 'N' as const,
+				sort: 'pk',
+				sortType: 'S'  as const
+			}
+		],
+		region,
+		schema: { partition: 'pk', sort: 'sk' },
+		secretAccessKey,
+		table
+	};
+};
+
 class Layer<T extends Dict = Dict> {
+	public static tableOptions = layerTableOptions;
+
 	public backgroundRunner?: (promise: Promise<void>) => void;
 	public db: Dynamodb<Layer.PendingEvent<T>>;
 	public getter: Layer.Getter<Dynamodb.PersistedItem<T>>;
