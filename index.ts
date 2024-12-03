@@ -30,8 +30,8 @@ import {
 	LocalSecondaryIndex
 } from '@aws-sdk/client-dynamodb';
 
-import { concatConditionExpression, concatUpdateExpression } from './expressions-helper';
-import Layer from './layer';
+import { concatConditionExpression, concatUpdateExpression } from './expressions-helper.js';
+import Layer from './layer.js';
 
 type Dict = Record<string, any>;
 
@@ -1186,5 +1186,5 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export { Dict, Layer as DynamodbLayer };
+export { Dict };
 export default Dynamodb;
