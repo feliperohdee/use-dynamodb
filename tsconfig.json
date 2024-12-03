@@ -2,8 +2,7 @@
 	"compilerOptions": {
         "declaration": true,
         "esModuleInterop": true,
-        "module": "ESNext",
-        "moduleResolution": "node",
+        "module": "CommonJS",
         "outDir": "./dist",
         "strict": true,
         "target": "ES2020"
