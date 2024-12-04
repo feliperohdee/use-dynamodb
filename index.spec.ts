@@ -122,7 +122,7 @@ describe('/index.ts', () => {
 			]);
 			expect(res[0].count).toEqual(0);
 			expect(res[1].count).toEqual(0);
-			expect(onChangeMock).toHaveBeenCalledTimes(3);
+			expect(onChangeMock).toHaveBeenCalledTimes(9);
 		});
 	});
 

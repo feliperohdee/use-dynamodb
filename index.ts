@@ -31,7 +31,6 @@ import {
 } from '@aws-sdk/client-dynamodb';
 
 import { concatConditionExpression, concatUpdateExpression } from './expressions-helper.js';
-import Layer from './layer.js';
 
 type Dict = Record<string, any>;
 
@@ -92,8 +91,6 @@ namespace Dynamodb {
 }
 
 class Dynamodb<T extends Dict = Dict> {
-	public static Layer = Layer;
-
 	public client: DynamoDBDocumentClient;
 	public indexes: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
 	public schema: Dynamodb.TableSchema;
@@ -156,11 +153,9 @@ class Dynamodb<T extends Dict = Dict> {
 					}
 				})
 			);
-		}
-
-		if (_.size(keys)) {
+			
 			await this.notifyChanges(
-				_.map(keys, key => {
+				_.map(chunk, key => {
 					return {
 						item: key,
 						partition: key[this.schema.partition],
@@ -225,11 +220,9 @@ class Dynamodb<T extends Dict = Dict> {
 					}
 				})
 			);
-		}
-
-		if (_.size(persistedItems)) {
+			
 			await this.notifyChanges(
-				_.map(persistedItems, item => {
+				_.map(chunk, item => {
 					return {
 						item,
 						partition: item[this.schema.partition],
@@ -490,6 +483,7 @@ class Dynamodb<T extends Dict = Dict> {
 		queryExpression?: string;
 		select?: string[];
 		startKey?: Dict | null;
+		strictChunkLimit?: boolean;
 	}): Promise<Dynamodb.MultiResponse<R>> {
 		if (!options.item && !options.queryExpression) {
 			throw new Error('Must provide either item or queryExpression');
@@ -602,14 +596,21 @@ class Dynamodb<T extends Dict = Dict> {
 		let items = (res.Items || []) as Dynamodb.PersistedItem<R>[];
 		let count = _.size(items);
 		let evaluateLimit = queryCommandInput.Limit ?? Infinity;
+		let mustIncreaseEvaluateLimit = true;
+
+		if (options.strictChunkLimit && options.chunkLimit && _.isFinite(options.chunkLimit)) {
+			mustIncreaseEvaluateLimit = false;
+		}
 
 		if (_.isFunction(options.onChunk)) {
 			await options.onChunk({ count, items });
 		}
 
 		while (res.LastEvaluatedKey && count < options.limit!) {
-			// if less than limit, increase limit to get more items
-			evaluateLimit *= 2;
+			if (mustIncreaseEvaluateLimit) {
+				// if less than limit, increase limit to get more items
+				evaluateLimit *= 2;
+			}
 
 			res = await this.client.send(
 				new QueryCommand({
@@ -789,6 +790,7 @@ class Dynamodb<T extends Dict = Dict> {
 		onChunk?: ({ count, items }: { count: number; items: Dynamodb.PersistedItem<R>[] }) => Promise<void> | void;
 		select?: string[];
 		startKey?: Dict | null;
+		strictChunkLimit?: boolean;
 	}): Promise<Dynamodb.MultiResponse<R>> {
 		options = _.defaults({}, options, {
 			chunkLimit: Infinity,
@@ -849,14 +851,21 @@ class Dynamodb<T extends Dict = Dict> {
 		let items = (res.Items || []) as Dynamodb.PersistedItem<R>[];
 		let count = _.size(items);
 		let evaluateLimit = scanCommandInput.Limit ?? Infinity;
+		let mustIncreaseEvaluateLimit = true;
+
+		if (options.strictChunkLimit && options.chunkLimit && _.isFinite(options.chunkLimit)) {
+			mustIncreaseEvaluateLimit = false;
+		}
 
 		if (_.isFunction(options.onChunk)) {
 			await options.onChunk({ count, items });
 		}
 
 		while (res.LastEvaluatedKey && count < options.limit!) {
-			// if less than limit, increase limit to get more items
-			evaluateLimit *= 2;
+			if (mustIncreaseEvaluateLimit) {
+				// if less than limit, increase limit to get more items
+				evaluateLimit *= 2;
+			}
 
 			res = await this.client.send(
 				new ScanCommand({
@@ -1186,6 +1195,5 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export type { Layer as DynamodbLayer };
 export { Dict };
 export default Dynamodb;

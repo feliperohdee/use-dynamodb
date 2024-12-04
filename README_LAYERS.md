@@ -31,6 +31,7 @@ yarn add use-dynamodb
 
 ```typescript
 import Dynamodb from 'use-dynamodb';
+import DynamodbLayer from 'use-dynamodb/layer';
 
 type Item = {
 	pk: string;
@@ -57,7 +58,7 @@ const eventDb = new Dynamodb<LayerPendingEvent<Item>>({
 });
 
 // Then create the Layer instance
-const layer = new Dynamodb.Layer({
+const layer = new DynamodbLayer({
 	db: eventDb,
 	table: 'source-table',
 	// Optional background runner for sync operations
@@ -253,6 +254,7 @@ type LayerOptions<T extends Dict = Dict> = {
 
 ```typescript
 import { S3 } from '@aws-sdk/client-s3';
+import DynamodbLayer from 'use-dynamodb/layer';
 
 const s3 = new S3({
 	region: 'us-east-1',
@@ -262,7 +264,7 @@ const s3 = new S3({
 	}
 });
 
-const layer = new Dynamodb.Layer({
+const layer = new DynamodbLayer({
 	db: eventDb,
 	table: 'source-table',
 	backgroundRunner: promise => {
@@ -326,6 +328,7 @@ The module includes comprehensive test coverage. Here's a basic example:
 
 ```typescript
 import Dynamodb from 'use-dynamodb';
+import DynamodbLayer from 'use-dynamodb/layer';
 
 describe('Layer', () => {
 	let layer: Layer<Item>;
@@ -334,7 +337,7 @@ describe('Layer', () => {
 	const backgroundRunner = vi.fn();
 
 	beforeAll(async () => {
-		layer = new Dynamodb.Layer({
+		layer = new DynamodbLayer({
 			db: eventDb,
 			backgroundRunner,
 			getter,
