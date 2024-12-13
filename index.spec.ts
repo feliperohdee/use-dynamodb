@@ -509,6 +509,92 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('getLast', () => {
+		beforeAll(async () => {
+			await db.batchWrite(createItems(10));
+		});
+
+		afterAll(async () => {
+			await db.clear();
+		});
+
+		beforeEach(() => {
+			vi.spyOn(db.client, 'send');
+		});
+
+		it('should get the last item by partition key', async () => {
+			const item = await db.getLast({
+				item: { pk: 'pk-0' }
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						Limit: 1,
+						ScanIndexForward: false,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(item).toEqual(
+				expect.objectContaining({
+					foo: 'foo-8',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-8',
+					lsiSk: 'lsi-sk-8',
+					pk: 'pk-0',
+					sk: 'sk-8'
+				})
+			);
+		});
+
+		it('should get the last item by partition and sort key', async () => {
+			const item = await db.getLast({
+				item: { pk: 'pk-0', sk: 'sk-8' }
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConsistentRead: false,
+						ExpressionAttributeNames: {
+							'#__pk': 'pk',
+							'#__sk': 'sk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0',
+							':__sk': 'sk-8'
+						},
+						KeyConditionExpression: '#__pk = :__pk AND #__sk = :__sk',
+						Limit: 1,
+						ScanIndexForward: false,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(item).toEqual(
+				expect.objectContaining({
+					foo: 'foo-8',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-8',
+					lsiSk: 'lsi-sk-8',
+					pk: 'pk-0',
+					sk: 'sk-8'
+				})
+			);
+		});
+	});
+
 	describe('getLastEvaluatedKey', () => {
 		it('should returns', () => {
 			// @ts-expect-error
@@ -1395,6 +1481,60 @@ describe('/index.ts', () => {
 
 			expect(count).toEqual(5);
 			expect(lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query with scanIndexForward true', async () => {
+			const { count, items } = await db.query({
+				item: { pk: 'pk-0' },
+				scanIndexForward: true
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						ScanIndexForward: true,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(items[0].sk).toEqual('sk-0');
+			expect(items[items.length - 1].sk).toEqual('sk-8');
+		});
+
+		it('should query with scanIndexForward false', async () => {
+			const { count, items } = await db.query({
+				item: { pk: 'pk-0' },
+				scanIndexForward: false
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ExpressionAttributeNames: {
+							'#__pk': 'pk'
+						},
+						ExpressionAttributeValues: {
+							':__pk': 'pk-0'
+						},
+						KeyConditionExpression: '#__pk = :__pk',
+						ScanIndexForward: false,
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(count).toEqual(5);
+			expect(items[0].sk).toEqual('sk-8');
+			expect(items[items.length - 1].sk).toEqual('sk-0');
 		});
 	});
 

@@ -79,6 +79,7 @@ namespace Dynamodb {
 		onChunk?: ({ count, items }: { count: number; items: PersistedItem<T>[] }) => Promise<void> | void;
 		prefix?: boolean;
 		queryExpression?: string;
+		scanIndexForward?: boolean;
 		select?: string[];
 		startKey?: Dict | null;
 	};
@@ -366,6 +367,18 @@ class Dynamodb<T extends Dict = Dict> {
 		return _.size(items) > 0 ? items[0] : null;
 	}
 
+	async getLast<R extends Dict = T>(
+		options: Omit<Dynamodb.FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>
+	): Promise<Dynamodb.PersistedItem<R> | null> {
+		const { items } = await this.query<R>({
+			...options,
+			limit: 1,
+			scanIndexForward: false
+		});
+
+		return _.size(items) > 0 ? items[0] : null;
+	}
+
 	private getLastEvaluatedKey(items: Dict[], index?: string): Dict | null {
 		if (!_.size(items)) {
 			return null;
@@ -481,6 +494,7 @@ class Dynamodb<T extends Dict = Dict> {
 		onChunk?: ({ count, items }: { count: number; items: Dynamodb.PersistedItem<R>[] }) => Promise<void> | void;
 		prefix?: boolean;
 		queryExpression?: string;
+		scanIndexForward?: boolean;
 		select?: string[];
 		startKey?: Dict | null;
 		strictChunkLimit?: boolean;
@@ -590,6 +604,10 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		} else if (options.queryExpression) {
 			queryCommandInput.KeyConditionExpression = options.queryExpression;
+		}
+
+		if (!_.isUndefined(options.scanIndexForward)) {
+			queryCommandInput.ScanIndexForward = options.scanIndexForward;
 		}
 
 		let res = await this.client.send(new QueryCommand(queryCommandInput));

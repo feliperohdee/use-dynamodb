@@ -141,6 +141,11 @@ const queriedItem = await db.get({
 	attributeValues: { ':pk': 'user#123' },
 	queryExpression: '#pk = :pk'
 });
+
+// Get last by partition and sort key
+const item = await db.getLast({
+	item: { pk: 'user#123', sk: 'profile' }
+});
 ```
 
 #### Update Item
