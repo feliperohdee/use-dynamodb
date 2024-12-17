@@ -138,7 +138,9 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	async batchDelete(keys: Dict[]): Promise<Dict[]> {
-		keys = _.map(keys, this.getSchemaKeys.bind(this));
+		keys = _.map(keys, item => {
+			return this.getSchemaKeys(item);
+		});
 
 		const chunks = _.chunk(keys, 25);
 
@@ -172,7 +174,9 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	async batchGet<R extends Dict = T>(keys: Dict[]): Promise<Dynamodb.PersistedItem<R>[]> {
-		keys = _.map(keys, this.getSchemaKeys.bind(this));
+		keys = _.map(keys, item => {
+			return this.getSchemaKeys(item);
+		});
 
 		let chunks = _.chunk(keys, 100);
 		let items: Dynamodb.PersistedItem<R>[] = [];
