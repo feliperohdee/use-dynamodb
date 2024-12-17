@@ -46,7 +46,7 @@ const factory = ({ onChange }: { onChange: Mock }) => {
 			}
 		],
 		onChange,
-		schema: { partition: 'pk', sort: 'sk' },
+		schema: {  partition: 'pk', sort: 'sk' },
 		table: 'use-dynamodb-spec'
 	});
 };

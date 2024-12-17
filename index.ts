@@ -51,7 +51,12 @@ namespace Dynamodb {
 	};
 
 	export type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void> | void;
-	export type TableSchema = { partition: string; sort?: string };
+	export type TableSchema = { 
+		partition: string; 
+		sort?: string;
+		sortType?: 'S' | 'N';
+	};
+
 	export type TableGSI = {
 		name: string;
 		partition: string;
@@ -1127,12 +1132,12 @@ class Dynamodb<T extends Dict = Dict> {
 					return _.compact([
 						{
 							AttributeName: index.partition,
-							AttributeType: index.partitionType
+							AttributeType: index.partitionType || 'S'
 						},
 						index.sort
 							? {
 									AttributeName: index.sort,
-									AttributeType: index.sortType
+									AttributeType: index.sortType || 'S'
 								}
 							: null
 					]);
@@ -1165,7 +1170,7 @@ class Dynamodb<T extends Dict = Dict> {
 				const localIndexesDefinitions = _.map(lsi, index => {
 					return {
 						AttributeName: index.sort,
-						AttributeType: index.sortType
+						AttributeType: index.sortType || 'S'
 					};
 				}) as AttributeDefinition[];
 
@@ -1177,7 +1182,7 @@ class Dynamodb<T extends Dict = Dict> {
 					this.schema.sort
 						? {
 								AttributeName: this.schema.sort,
-								AttributeType: 'S'
+								AttributeType: this.schema.sortType || 'S'
 							}
 						: null
 				]) as AttributeDefinition[];
