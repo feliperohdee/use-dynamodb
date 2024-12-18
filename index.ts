@@ -74,7 +74,7 @@ namespace Dynamodb {
 
 	export type FilterOptions<T extends Dict = Dict> = {
 		attributeNames?: Record<string, string>;
-		attributeValues?: Record<string, string | number>;
+		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
 		filterExpression?: string;
@@ -272,7 +272,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async delete<R extends Dict = T>(options: {
 		attributeNames?: Record<string, string>;
-		attributeValues?: Record<string, string | number>;
+		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
 		filter: Omit<Dynamodb.FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	}): Promise<Dynamodb.PersistedItem<R> | null> {
@@ -429,7 +429,7 @@ class Dynamodb<T extends Dict = Dict> {
 		item: Dict,
 		options?: {
 			attributeNames?: Record<string, string>;
-			attributeValues?: Record<string, string | number>;
+			attributeValues?: Record<string, any>;
 			conditionExpression?: string;
 			overwrite?: boolean;
 		},
@@ -493,7 +493,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async query<R extends Dict = T>(options: {
 		attributeNames?: Record<string, string>;
-		attributeValues?: Record<string, string | number>;
+		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
 		filterExpression?: string;
@@ -675,7 +675,7 @@ class Dynamodb<T extends Dict = Dict> {
 		replacedItem: Dynamodb.PersistedItem,
 		options?: {
 			attributeNames?: Record<string, string>;
-			attributeValues?: Record<string, string | number>;
+			attributeValues?: Record<string, any>;
 			conditionExpression?: string;
 			overwrite?: boolean;
 		},
@@ -808,7 +808,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async scan<R extends Dict = T>(options?: {
 		attributeNames?: Record<string, string>;
-		attributeValues?: Record<string, string | number>;
+		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
 		filterExpression?: string;
@@ -949,7 +949,7 @@ class Dynamodb<T extends Dict = Dict> {
 		options: {
 			allowUpdatePartitionAndSort?: boolean;
 			attributeNames?: Record<string, string>;
-			attributeValues?: Record<string, string | number>;
+			attributeValues?: Record<string, any>;
 			conditionExpression?: string;
 			filter: Omit<Dynamodb.FilterOptions, 'limit' | 'onChunk' | 'startKey'>;
 			updateExpression?: string;
