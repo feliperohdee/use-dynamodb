@@ -806,7 +806,7 @@ describe('/index.ts', () => {
 			}
 		});
 
-		it('should put ovewriting', async () => {
+		it('should put overwriting', async () => {
 			const item = await db.get({
 				item: { pk: 'pk-0', sk: 'sk-0' }
 			});
@@ -852,6 +852,7 @@ describe('/index.ts', () => {
 		it('should put with options', async () => {
 			const item = await db.put(
 				{
+					__createdAt: '2021-01-01T00:00:00.000Z',
 					pk: 'pk-0',
 					sk: 'sk-1'
 				},
@@ -886,6 +887,52 @@ describe('/index.ts', () => {
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-1'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		it('should put overriding createdAt', async () => {
+			const item = await db.put(
+				{
+					__createdAt: '2021-01-01T00:00:00.000Z',
+					pk: 'pk-0',
+					sk: 'sk-2'
+				},
+				{
+					attributeNames: { '#foo': 'foo' },
+					attributeValues: { ':foo': 'foo-0' },
+					conditionExpression: '#foo <> :foo',
+					overrideCreatedAt: true,
+					overwrite: false
+				}
+			);
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConditionExpression: 'attribute_not_exists(#__pk) AND #foo <> :foo',
+						ExpressionAttributeNames: { '#foo': 'foo', '#__pk': 'pk' },
+						ExpressionAttributeValues: { ':foo': 'foo-0' },
+						Item: {
+							__createdAt: expect.any(String),
+							__ts: expect.any(Number),
+							__updatedAt: expect.any(String),
+							pk: 'pk-0',
+							sk: 'sk-2'
+						},
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(item.__createdAt).not.toEqual(item.__updatedAt);
+			expect(item.__createdAt).toEqual('2021-01-01T00:00:00.000Z');
+			expect(item).toEqual(
+				expect.objectContaining({
+					pk: 'pk-0',
+					sk: 'sk-2'
 				})
 			);
 
@@ -1556,6 +1603,7 @@ describe('/index.ts', () => {
 			onChangeMock.mockClear();
 			const newItem = await db.replace(
 				{
+					__createdAt: '2021-01-01T00:00:00.000Z',
 					pk: 'pk-1',
 					sk: 'sk-1'
 				},
@@ -1582,6 +1630,7 @@ describe('/index.ts', () => {
 				]
 			});
 
+			expect(newItem.__createdAt).toEqual(replacedItem.__createdAt);
 			expect(newItem).toEqual({
 				pk: 'pk-1',
 				sk: 'sk-1',
@@ -1592,8 +1641,59 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
+		
+		it('should replace overriding createdAt', async () => {
+			const replacedItem = await db.put({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
 
-		it('should replace ovewriting', async () => {
+			onChangeMock.mockClear();
+			const newItem = await db.replace(
+				{
+					__createdAt: '2021-01-01T00:00:00.000Z',
+					pk: 'pk-1',
+					sk: 'sk-1'
+				},
+				replacedItem,
+				{
+					overrideCreatedAt: true
+				}
+			);
+
+			expect(db.transaction).toHaveBeenCalledWith({
+				TransactItems: [
+					{
+						Delete: expect.objectContaining({
+							ConditionExpression: '#__ts = :__ts',
+							ExpressionAttributeNames: { '#__ts': '__ts' },
+							ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+							TableName: 'use-dynamodb-spec'
+						})
+					},
+					{
+						Put: expect.objectContaining({
+							ConditionExpression: 'attribute_not_exists(#__pk)',
+							ExpressionAttributeNames: { '#__pk': 'pk' },
+							TableName: 'use-dynamodb-spec'
+						})
+					}
+				]
+			});
+
+			expect(newItem.__createdAt).not.toEqual(replacedItem.__createdAt);
+			expect(newItem).toEqual({
+				pk: 'pk-1',
+				sk: 'sk-1',
+				__createdAt: '2021-01-01T00:00:00.000Z',
+				__ts: newItem.__ts,
+				__updatedAt: newItem.__updatedAt
+			});
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		it('should replace overwriting', async () => {
 			await db.put({
 				pk: 'pk-1',
 				sk: 'sk-1'
@@ -1632,6 +1732,7 @@ describe('/index.ts', () => {
 				]
 			});
 
+			expect(newItem.__createdAt).toEqual(replacedItem.__createdAt);
 			expect(newItem).toEqual({
 				pk: 'pk-1',
 				sk: 'sk-1',
@@ -1914,6 +2015,7 @@ describe('/index.ts', () => {
 					},
 					attributeValues: { ':__curr_ts': expect.any(Number) },
 					conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+					overrideCreatedAt: true,
 					overwrite: true
 				}
 			);
@@ -1961,6 +2063,7 @@ describe('/index.ts', () => {
 					},
 					attributeValues: { ':__curr_ts': expect.any(Number) },
 					conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+					overrideCreatedAt: true,
 					overwrite: true
 				}
 			);
@@ -2026,6 +2129,7 @@ describe('/index.ts', () => {
 					attributeNames: { '#__ts': '__ts' },
 					attributeValues: { ':__curr_ts': expect.any(Number) },
 					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
+					overrideCreatedAt: true,
 					overwrite: true
 				}
 			);
@@ -2059,6 +2163,7 @@ describe('/index.ts', () => {
 					attributeNames: { '#__ts': '__ts' },
 					attributeValues: { ':__curr_ts': expect.any(Number) },
 					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
+					overrideCreatedAt: true,
 					overwrite: true
 				}
 			);

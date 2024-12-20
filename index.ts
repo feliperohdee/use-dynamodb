@@ -51,8 +51,8 @@ namespace Dynamodb {
 	};
 
 	export type OnChange<T extends Dict = Dict> = (events: ChangeEvent<T>[]) => Promise<void> | void;
-	export type TableSchema = { 
-		partition: string; 
+	export type TableSchema = {
+		partition: string;
 		sort?: string;
 		sortType?: 'S' | 'N';
 	};
@@ -161,7 +161,7 @@ class Dynamodb<T extends Dict = Dict> {
 					}
 				})
 			);
-			
+
 			await this.notifyChanges(
 				_.map(chunk, key => {
 					return {
@@ -230,7 +230,7 @@ class Dynamodb<T extends Dict = Dict> {
 					}
 				})
 			);
-			
+
 			await this.notifyChanges(
 				_.map(chunk, item => {
 					return {
@@ -431,6 +431,7 @@ class Dynamodb<T extends Dict = Dict> {
 			attributeNames?: Record<string, string>;
 			attributeValues?: Record<string, any>;
 			conditionExpression?: string;
+			overrideCreatedAt?: boolean;
 			overwrite?: boolean;
 		},
 		ts: number = _.now()
@@ -455,7 +456,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const nowISO = new Date(ts).toISOString();
 		const persistedItem = {
 			...item,
-			__createdAt: item.__createdAt ?? nowISO,
+			__createdAt: options.overrideCreatedAt ? (item.__createdAt ?? nowISO) : nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
@@ -677,6 +678,7 @@ class Dynamodb<T extends Dict = Dict> {
 			attributeNames?: Record<string, string>;
 			attributeValues?: Record<string, any>;
 			conditionExpression?: string;
+			overrideCreatedAt?: boolean;
 			overwrite?: boolean;
 		},
 		ts: number = _.now()
@@ -687,7 +689,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const nowISO = new Date(ts).toISOString();
 		const newItem = {
 			...item,
-			__createdAt: replacedItem.__createdAt ?? nowISO,
+			__createdAt: options.overrideCreatedAt ? (item.__createdAt ?? replacedItem.__createdAt) : replacedItem.__createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
@@ -1055,7 +1057,8 @@ class Dynamodb<T extends Dict = Dict> {
 					{
 						attributeNames: options.attributeNames,
 						attributeValues: options.attributeValues,
-						conditionExpression
+						conditionExpression,
+						overrideCreatedAt: true
 					},
 					ts
 				);
@@ -1088,6 +1091,7 @@ class Dynamodb<T extends Dict = Dict> {
 			attributeNames: options.attributeNames,
 			attributeValues: options.attributeValues,
 			conditionExpression,
+			overrideCreatedAt: true,
 			overwrite: true
 		});
 	}
@@ -1222,5 +1226,5 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 }
 
-export { Dict };
+export { concatConditionExpression, concatUpdateExpression, Dict };
 export default Dynamodb;
