@@ -61,7 +61,7 @@ const layerTableOptions = ({
 				partition: 'cursor',
 				partitionType: 'N' as const,
 				sort: 'pk',
-				sortType: 'S'  as const
+				sortType: 'S' as const
 			}
 		],
 		region,

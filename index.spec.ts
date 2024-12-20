@@ -46,7 +46,7 @@ const factory = ({ onChange }: { onChange: Mock }) => {
 			}
 		],
 		onChange,
-		schema: {  partition: 'pk', sort: 'sk' },
+		schema: { partition: 'pk', sort: 'sk' },
 		table: 'use-dynamodb-spec'
 	});
 };
@@ -1641,7 +1641,7 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
-		
+
 		it('should replace overriding createdAt', async () => {
 			const replacedItem = await db.put({
 				pk: 'pk-0',
