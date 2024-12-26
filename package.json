@@ -33,5 +33,5 @@
 		"npm-publish-only": "yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
 		"test": "./.test.sh"
 	},
-	"version": "1.0.33"
+	"version": "1.0.34"
 }

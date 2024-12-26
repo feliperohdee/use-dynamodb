@@ -194,13 +194,55 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts)',
+						ConditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
 						ExpressionAttributeNames: {
+							'#__pk': 'pk',
 							'#__ts': '__ts'
 						},
 						ExpressionAttributeValues: {
-							':__ts': expect.any(Number)
+							':__curr_ts': expect.any(Number)
 						},
+						Key: {
+							pk: 'pk-0',
+							sk: 'sk-0'
+						},
+						ReturnValues: 'ALL_OLD',
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(item).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-0',
+					lsiSk: 'lsi-sk-0',
+					sk: 'sk-0',
+					pk: 'pk-0'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
+		});
+
+		it('should delete with consistencyCheck = false', async () => {
+			const item = await db.delete({
+				consistencyCheck: false,
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
+				}
+			});
+
+			expect(db.get).toHaveBeenCalledWith({
+				item: { pk: 'pk-0', sk: 'sk-0' }
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConditionExpression: 'attribute_exists(#__pk)',
+						ExpressionAttributeNames: { '#__pk': 'pk' },
 						Key: {
 							pk: 'pk-0',
 							sk: 'sk-0'
@@ -227,33 +269,33 @@ describe('/index.ts', () => {
 
 		it('should delete by queryExpression and condition', async () => {
 			const item = await db.delete({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				conditionExpression: '#pk = :pk',
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				conditionExpression: '#__pk = :__pk',
 				filter: {
-					attributeNames: { '#pk': 'pk' },
-					attributeValues: { ':pk': 'pk-0' },
-					queryExpression: '#pk = :pk'
+					attributeNames: { '#__pk': 'pk' },
+					attributeValues: { ':__pk': 'pk-0' },
+					queryExpression: '#__pk = :__pk'
 				}
 			});
 
 			expect(db.get).toHaveBeenCalledWith({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				queryExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				queryExpression: '#__pk = :__pk'
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ConditionExpression: '(attribute_exists(#__ts) AND #__ts = :__ts) AND #pk = :pk',
+						ConditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts) AND #__pk = :__pk',
 						ExpressionAttributeNames: {
-							'#pk': 'pk',
+							'#__pk': 'pk',
 							'#__ts': '__ts'
 						},
 						ExpressionAttributeValues: {
-							':pk': 'pk-0',
-							':__ts': expect.any(Number)
+							':__pk': 'pk-0',
+							':__curr_ts': expect.any(Number)
 						},
 						Key: {
 							pk: 'pk-0',
@@ -313,26 +355,26 @@ describe('/index.ts', () => {
 
 		it('should delete by queryExpression', async () => {
 			const batchDeleteItems = await db.deleteMany({
-				attributeNames: { '#pk': 'pk', '#sk': 'sk' },
+				attributeNames: { '#__pk': 'pk', '#sk': 'sk' },
 				attributeValues: {
+					':__pk': 'pk-1',
 					':from': 'sk-0',
-					':pk': 'pk-1',
 					':to': 'sk-999'
 				},
-				queryExpression: '#pk = :pk AND #sk BETWEEN :from AND :to'
+				queryExpression: '#__pk = :__pk AND #sk BETWEEN :from AND :to'
 			});
 
 			expect(db.filter).toHaveBeenCalledWith({
-				attributeNames: { '#pk': 'pk', '#sk': 'sk' },
+				attributeNames: { '#__pk': 'pk', '#sk': 'sk' },
 				attributeValues: {
+					':__pk': 'pk-1',
 					':from': 'sk-0',
-					':pk': 'pk-1',
 					':to': 'sk-999'
 				},
 				consistentRead: true,
 				limit: Infinity,
 				onChunk: expect.any(Function),
-				queryExpression: '#pk = :pk AND #sk BETWEEN :from AND :to',
+				queryExpression: '#__pk = :__pk AND #sk BETWEEN :from AND :to',
 				startKey: null
 			});
 
@@ -380,15 +422,15 @@ describe('/index.ts', () => {
 
 		it('should filter by query expression', async () => {
 			const { count, lastEvaluatedKey } = await db.filter({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				queryExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				queryExpression: '#__pk = :__pk'
 			});
 
 			expect(db.query).toHaveBeenCalledWith({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				queryExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				queryExpression: '#__pk = :__pk'
 			});
 
 			expect(count).toEqual(5);
@@ -397,15 +439,15 @@ describe('/index.ts', () => {
 
 		it('should filter by scan', async () => {
 			const { count, lastEvaluatedKey } = await db.filter({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				filterExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				filterExpression: '#__pk = :__pk'
 			});
 
 			expect(db.scan).toHaveBeenCalledWith({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				filterExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				filterExpression: '#__pk = :__pk'
 			});
 
 			expect(count).toEqual(5);
@@ -460,17 +502,17 @@ describe('/index.ts', () => {
 
 		it('should get by query expression', async () => {
 			const item = await db.get({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				queryExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				queryExpression: '#__pk = :__pk'
 			});
 
 			expect(db.filter).toHaveBeenCalledWith({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
 				limit: 1,
 				onChunk: expect.any(Function),
-				queryExpression: '#pk = :pk',
+				queryExpression: '#__pk = :__pk',
 				startKey: null
 			});
 
@@ -849,7 +891,7 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
-		it('should put with options', async () => {
+		it('should put with condition', async () => {
 			const item = await db.put(
 				{
 					__createdAt: '2021-01-01T00:00:00.000Z',
@@ -904,8 +946,8 @@ describe('/index.ts', () => {
 					attributeNames: { '#foo': 'foo' },
 					attributeValues: { ':foo': 'foo-0' },
 					conditionExpression: '#foo <> :foo',
-					overrideCreatedAt: true,
-					overwrite: false
+					overwrite: false,
+					useCurrentCreatedAtIfExists: true
 				}
 			);
 
@@ -1509,18 +1551,18 @@ describe('/index.ts', () => {
 
 		it('should query by expression', async () => {
 			const { count, lastEvaluatedKey } = await db.query({
-				attributeNames: { '#pk': 'pk' },
-				attributeValues: { ':pk': 'pk-0' },
-				queryExpression: '#pk = :pk'
+				attributeNames: { '#__pk': 'pk' },
+				attributeValues: { ':__pk': 'pk-0' },
+				queryExpression: '#__pk = :__pk'
 			});
 
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
 						ConsistentRead: false,
-						ExpressionAttributeNames: { '#pk': 'pk' },
-						ExpressionAttributeValues: { ':pk': 'pk-0' },
-						KeyConditionExpression: '#pk = :pk',
+						ExpressionAttributeNames: { '#__pk': 'pk' },
+						ExpressionAttributeValues: { ':__pk': 'pk-0' },
+						KeyConditionExpression: '#__pk = :__pk',
 						TableName: 'use-dynamodb-spec'
 					})
 				})
@@ -1614,9 +1656,59 @@ describe('/index.ts', () => {
 				TransactItems: [
 					{
 						Delete: expect.objectContaining({
-							ConditionExpression: '#__ts = :__ts',
-							ExpressionAttributeNames: { '#__ts': '__ts' },
-							ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+							ConditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+							ExpressionAttributeNames: { '#__pk': 'pk', '#__ts': '__ts' },
+							ExpressionAttributeValues: { ':__curr_ts': replacedItem.__ts },
+							TableName: 'use-dynamodb-spec'
+						})
+					},
+					{
+						Put: expect.objectContaining({
+							ConditionExpression: 'attribute_not_exists(#__pk)',
+							ExpressionAttributeNames: { '#__pk': 'pk' },
+							TableName: 'use-dynamodb-spec'
+						})
+					}
+				]
+			});
+
+			expect(newItem.__createdAt).toEqual(replacedItem.__createdAt);
+			expect(newItem).toEqual({
+				pk: 'pk-1',
+				sk: 'sk-1',
+				__createdAt: replacedItem.__createdAt,
+				__ts: newItem.__ts,
+				__updatedAt: newItem.__updatedAt
+			});
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		it('should replace with consistencyCheck = false', async () => {
+			const replacedItem = await db.put({
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			onChangeMock.mockClear();
+			const newItem = await db.replace(
+				{
+					__createdAt: '2021-01-01T00:00:00.000Z',
+					pk: 'pk-1',
+					sk: 'sk-1'
+				},
+				replacedItem,
+				{
+					consistencyCheck: false
+				}
+			);
+
+			expect(db.transaction).toHaveBeenCalledWith({
+				TransactItems: [
+					{
+						Delete: expect.objectContaining({
+							ConditionExpression: 'attribute_exists(#__pk)',
+							ExpressionAttributeNames: { '#__pk': 'pk' },
 							TableName: 'use-dynamodb-spec'
 						})
 					},
@@ -1657,7 +1749,7 @@ describe('/index.ts', () => {
 				},
 				replacedItem,
 				{
-					overrideCreatedAt: true
+					useCurrentCreatedAtIfExists: true
 				}
 			);
 
@@ -1665,9 +1757,9 @@ describe('/index.ts', () => {
 				TransactItems: [
 					{
 						Delete: expect.objectContaining({
-							ConditionExpression: '#__ts = :__ts',
-							ExpressionAttributeNames: { '#__ts': '__ts' },
-							ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+							ConditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+							ExpressionAttributeNames: { '#__pk': 'pk', '#__ts': '__ts' },
+							ExpressionAttributeValues: { ':__curr_ts': replacedItem.__ts },
 							TableName: 'use-dynamodb-spec'
 						})
 					},
@@ -1718,9 +1810,9 @@ describe('/index.ts', () => {
 				TransactItems: [
 					{
 						Delete: expect.objectContaining({
-							ConditionExpression: '#__ts = :__ts',
-							ExpressionAttributeNames: { '#__ts': '__ts' },
-							ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+							ConditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+							ExpressionAttributeNames: { '#__pk': 'pk', '#__ts': '__ts' },
+							ExpressionAttributeValues: { ':__curr_ts': replacedItem.__ts },
 							TableName: 'use-dynamodb-spec'
 						})
 					},
@@ -1771,9 +1863,9 @@ describe('/index.ts', () => {
 					TransactItems: [
 						{
 							Delete: expect.objectContaining({
-								ConditionExpression: '#__ts = :__ts',
-								ExpressionAttributeNames: { '#__ts': '__ts' },
-								ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
+								ConditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+								ExpressionAttributeNames: { '#__pk': 'pk', '#__ts': '__ts' },
+								ExpressionAttributeValues: { ':__curr_ts': replacedItem.__ts },
 								TableName: 'use-dynamodb-spec'
 							})
 						},
@@ -1981,61 +2073,7 @@ describe('/index.ts', () => {
 			}
 		});
 
-		it('should update with updateFunction', async () => {
-			await db.batchWrite(createItems(1));
-
-			const item = await db.update({
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				updateFunction: item => {
-					return {
-						...item,
-						foo: 'foo-1'
-					};
-				}
-			});
-
-			expect(db.put).toHaveBeenCalledWith(
-				{
-					__createdAt: expect.any(String),
-					__ts: expect.any(Number),
-					__updatedAt: expect.any(String),
-					foo: 'foo-1',
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: {
-						'#__pk': 'pk',
-						'#__ts': '__ts'
-					},
-					attributeValues: { ':__curr_ts': expect.any(Number) },
-					conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
-					overrideCreatedAt: true,
-					overwrite: true
-				}
-			);
-
-			expect(item.__updatedAt).not.toEqual(item.__createdAt);
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-1',
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					sk: 'sk-0',
-					pk: 'pk-0'
-				})
-			);
-
-			expect(onChangeMock).toHaveBeenCalledTimes(2);
-		});
-
-		it('should update without updateFunction', async () => {
+		it('should update without updateFunction neither updateExpression', async () => {
 			await db.batchWrite(createItems(1));
 
 			const item = await db.update({
@@ -2063,8 +2101,8 @@ describe('/index.ts', () => {
 					},
 					attributeValues: { ':__curr_ts': expect.any(Number) },
 					conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
-					overrideCreatedAt: true,
-					overwrite: true
+					overwrite: true,
+					useCurrentCreatedAtIfExists: true
 				}
 			);
 
@@ -2083,320 +2121,474 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
-		it('should not update partition and sort', async () => {
-			await db.batchWrite(createItems(1));
+		it('should upsert without updateFunction neither updateExpression', async () => {
+			const item = await db.update({
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-0' }
+				},
+				upsert: true
+			});
 
-			try {
-				await db.update({
+			expect(db.put).toHaveBeenCalledWith(
+				{
+					pk: 'pk-0',
+					sk: 'sk-0'
+				},
+				{
+					attributeNames: {
+						'#__pk': 'pk',
+						'#__ts': '__ts'
+					},
+					attributeValues: { ':__curr_ts': 0 },
+					conditionExpression: '(attribute_not_exists(#__pk) OR #__ts = :__curr_ts)',
+					overwrite: true,
+					useCurrentCreatedAtIfExists: true
+				}
+			);
+
+			expect(item.__updatedAt).toEqual(item.__createdAt);
+			expect(item).toEqual(
+				expect.objectContaining({
+					sk: 'sk-0',
+					pk: 'pk-0'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		describe('updateExpression', () => {
+			it('should update', async () => {
+				await db.batchWrite(createItems(1));
+
+				const item = await db.update({
+					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
+					attributeValues: { ':foo': 'foo-1', ':one': 1 },
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateExpression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one'
+				});
+
+				expect(db.client.send).toHaveBeenCalledWith(
+					expect.objectContaining({
+						input: expect.objectContaining({
+							ConditionExpression: 'attribute_exists(#__pk)',
+							ExpressionAttributeNames: {
+								'#__cr': '__createdAt',
+								'#__pk': 'pk',
+								'#__ts': '__ts',
+								'#__up': '__updatedAt',
+								'#bar': 'bar',
+								'#foo': 'foo'
+							},
+							ExpressionAttributeValues: {
+								':foo': 'foo-1',
+								':one': 1,
+								':__cr': expect.any(String),
+								':__ts': expect.any(Number),
+								':__up': expect.any(String)
+							},
+							Key: {
+								pk: 'pk-0',
+								sk: 'sk-0'
+							},
+							ReturnValues: 'ALL_NEW',
+							TableName: 'use-dynamodb-spec',
+							UpdateExpression:
+								'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
+						})
+					})
+				);
+
+				expect(item.__createdAt).not.toEqual(item.__updatedAt);
+				expect(item).toEqual(
+					expect.objectContaining({
+						foo: 'foo-0',
+						bar: 1,
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-0',
+						lsiSk: 'lsi-sk-0',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					})
+				);
+
+				expect(onChangeMock).toHaveBeenCalledTimes(2);
+			});
+
+			it('should upsert', async () => {
+				const item = await db.update({
+					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
+					attributeValues: { ':foo': 'foo-1', ':one': 1 },
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateExpression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one',
+					upsert: true
+				});
+
+				expect(db.client.send).toHaveBeenCalledWith(
+					expect.objectContaining({
+						input: expect.objectContaining({
+							ExpressionAttributeNames: {
+								'#bar': 'bar',
+								'#foo': 'foo',
+								'#__cr': '__createdAt',
+								'#__ts': '__ts',
+								'#__up': '__updatedAt'
+							},
+							ExpressionAttributeValues: {
+								':foo': 'foo-1',
+								':one': 1,
+								':__cr': expect.any(String),
+								':__ts': expect.any(Number),
+								':__up': expect.any(String)
+							},
+							Key: {
+								pk: 'pk-0',
+								sk: 'sk-0'
+							},
+							ReturnValues: 'ALL_NEW',
+							TableName: 'use-dynamodb-spec',
+							UpdateExpression:
+								'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
+						})
+					})
+				);
+
+				expect(item.__createdAt).toEqual(item.__updatedAt);
+				expect(item).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						bar: 1,
+						pk: 'pk-0',
+						sk: 'sk-0'
+					})
+				);
+
+				expect(onChangeMock).toHaveBeenCalledOnce();
+			});
+		});
+
+		describe('updateFunction', () => {
+			it('should update', async () => {
+				await db.batchWrite(createItems(1));
+
+				const item = await db.update({
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-0' }
 					},
 					updateFunction: item => {
 						return {
 							...item,
-							pk: 'pk-1',
-							sk: 'sk-1',
 							foo: 'foo-1'
 						};
 					}
 				});
-			} catch (err) {
-				expect(err.name).toContain('ConditionalCheckFailedException');
-			}
-		});
 
-		it('should upsert with updateFunction', async () => {
-			const item = await db.update({
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				updateFunction: item => {
-					return {
-						...item,
-						foo: 'foo-1'
-					};
-				},
-				upsert: true
-			});
-
-			expect(db.put).toHaveBeenCalledWith(
-				{
-					foo: 'foo-1',
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: { '#__ts': '__ts' },
-					attributeValues: { ':__curr_ts': expect.any(Number) },
-					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
-					overrideCreatedAt: true,
-					overwrite: true
-				}
-			);
-
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-1',
-					pk: 'pk-0',
-					sk: 'sk-0'
-				})
-			);
-
-			expect(onChangeMock).toHaveBeenCalledOnce();
-		});
-
-		it('should upsert without updateFunction', async () => {
-			const item = await db.update({
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				upsert: true
-			});
-
-			expect(db.put).toHaveBeenCalledWith(
-				{
-					pk: 'pk-0',
-					sk: 'sk-0'
-				},
-				{
-					attributeNames: { '#__ts': '__ts' },
-					attributeValues: { ':__curr_ts': expect.any(Number) },
-					conditionExpression: '(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)',
-					overrideCreatedAt: true,
-					overwrite: true
-				}
-			);
-
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(
-				expect.objectContaining({
-					pk: 'pk-0',
-					sk: 'sk-0'
-				})
-			);
-
-			expect(onChangeMock).toHaveBeenCalledOnce();
-		});
-
-		it('should update with updateExpression', async () => {
-			await db.batchWrite(createItems(1));
-
-			const item = await db.update({
-				attributeNames: { '#foo': 'foo', '#bar': 'bar' },
-				attributeValues: { ':foo': 'foo-1', ':one': 1 },
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				updateExpression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one'
-			});
-
-			expect(db.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ConditionExpression: 'attribute_exists(#__pk)',
-						ExpressionAttributeNames: {
-							'#__cr': '__createdAt',
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						foo: 'foo-1',
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-0',
+						lsiSk: 'lsi-sk-0',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						attributeNames: {
 							'#__pk': 'pk',
-							'#__ts': '__ts',
-							'#__up': '__updatedAt',
-							'#bar': 'bar',
-							'#foo': 'foo'
+							'#__ts': '__ts'
 						},
-						ExpressionAttributeValues: {
-							':foo': 'foo-1',
-							':one': 1,
-							':__cr': expect.any(String),
-							':__ts': expect.any(Number),
-							':__up': expect.any(String)
-						},
-						Key: {
-							pk: 'pk-0',
-							sk: 'sk-0'
-						},
-						ReturnValues: 'ALL_NEW',
-						TableName: 'use-dynamodb-spec',
-						UpdateExpression:
-							'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
+						attributeValues: { ':__curr_ts': expect.any(Number) },
+						conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
+				expect(item.__updatedAt).not.toEqual(item.__createdAt);
+				expect(item).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-0',
+						lsiSk: 'lsi-sk-0',
+						sk: 'sk-0',
+						pk: 'pk-0'
 					})
-				})
-			);
+				);
 
-			expect(item.__createdAt).not.toEqual(item.__updatedAt);
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-0',
-					bar: 1,
-					gsiPk: 'gsi-pk-0',
-					gsiSk: 'gsi-sk-0',
-					lsiSk: 'lsi-sk-0',
-					pk: 'pk-0',
-					sk: 'sk-0'
-				})
-			);
-
-			expect(onChangeMock).toHaveBeenCalledTimes(2);
-		});
-
-		it('should upsert with updateExpression', async () => {
-			const item = await db.update({
-				attributeNames: { '#foo': 'foo', '#bar': 'bar' },
-				attributeValues: { ':foo': 'foo-1', ':one': 1 },
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				updateExpression: 'SET #foo = if_not_exists(#foo, :foo) ADD #bar :one',
-				upsert: true
+				expect(onChangeMock).toHaveBeenCalledTimes(2);
 			});
 
-			expect(db.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						ExpressionAttributeNames: {
-							'#bar': 'bar',
-							'#foo': 'foo',
-							'#__cr': '__createdAt',
-							'#__ts': '__ts',
-							'#__up': '__updatedAt'
-						},
-						ExpressionAttributeValues: {
-							':foo': 'foo-1',
-							':one': 1,
-							':__cr': expect.any(String),
-							':__ts': expect.any(Number),
-							':__up': expect.any(String)
-						},
-						Key: {
-							pk: 'pk-0',
-							sk: 'sk-0'
-						},
-						ReturnValues: 'ALL_NEW',
-						TableName: 'use-dynamodb-spec',
-						UpdateExpression:
-							'SET #foo = if_not_exists(#foo, :foo), #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up ADD #bar :one'
+			it('should update with consistencyCheck = false', async () => {
+				await db.batchWrite(createItems(1));
+
+				const item = await db.update({
+					consistencyCheck: false,
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					}
+				});
+
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						foo: 'foo-1',
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-0',
+						lsiSk: 'lsi-sk-0',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						attributeNames: { '#__pk': 'pk' },
+						conditionExpression: 'attribute_exists(#__pk)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
+				expect(item.__updatedAt).not.toEqual(item.__createdAt);
+				expect(item).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-0',
+						lsiSk: 'lsi-sk-0',
+						sk: 'sk-0',
+						pk: 'pk-0'
 					})
-				})
-			);
+				);
 
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(
-				expect.objectContaining({
-					foo: 'foo-1',
-					bar: 1,
-					pk: 'pk-0',
-					sk: 'sk-0'
-				})
-			);
+				expect(onChangeMock).toHaveBeenCalledTimes(2);
+			});
 
-			expect(onChangeMock).toHaveBeenCalledOnce();
-		});
+			it('should upsert', async () => {
+				const item = await db.update({
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					},
+					upsert: true
+				});
 
-		it('should update partition key with transaction', async () => {
-			await db.batchWrite(createItems(1));
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						attributeNames: {
+							'#__pk': 'pk',
+							'#__ts': '__ts'
+						},
+						attributeValues: { ':__curr_ts': 0 },
+						conditionExpression: '(attribute_not_exists(#__pk) OR #__ts = :__curr_ts)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
 
-			const item = await db.update({
-				allowUpdatePartitionAndSort: true,
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				updateFunction: item => {
-					return {
-						...item,
-						pk: 'pk-1'
-					};
+				expect(item.__createdAt).toEqual(item.__updatedAt);
+				expect(item).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					})
+				);
+
+				expect(onChangeMock).toHaveBeenCalledOnce();
+			});
+
+			it('should upsert with consistencyCheck = false', async () => {
+				const item = await db.update({
+					consistencyCheck: false,
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					},
+					upsert: true
+				});
+
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
+				expect(item.__createdAt).toEqual(item.__updatedAt);
+				expect(item).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					})
+				);
+
+				expect(onChangeMock).toHaveBeenCalledOnce();
+			});
+
+			it('should not update partition and sort', async () => {
+				await db.batchWrite(createItems(1));
+
+				try {
+					await db.update({
+						filter: {
+							item: { pk: 'pk-0', sk: 'sk-0' }
+						},
+						updateFunction: item => {
+							return {
+								...item,
+								pk: 'pk-1',
+								sk: 'sk-1',
+								foo: 'foo-1'
+							};
+						}
+					});
+				} catch (err) {
+					expect(err.name).toContain('ConditionalCheckFailedException');
 				}
 			});
 
-			expect(db.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						TransactItems: expect.arrayContaining([
-							expect.objectContaining({
-								Delete: expect.objectContaining({
-									Key: {
-										pk: 'pk-0',
-										sk: 'sk-0'
-									},
-									TableName: 'use-dynamodb-spec'
+			it('should update partition key with transaction', async () => {
+				await db.batchWrite(createItems(1));
+
+				const item = await db.update({
+					allowUpdatePartitionAndSort: true,
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							pk: 'pk-1'
+						};
+					}
+				});
+
+				expect(db.client.send).toHaveBeenCalledWith(
+					expect.objectContaining({
+						input: expect.objectContaining({
+							TransactItems: expect.arrayContaining([
+								expect.objectContaining({
+									Delete: expect.objectContaining({
+										Key: {
+											pk: 'pk-0',
+											sk: 'sk-0'
+										},
+										TableName: 'use-dynamodb-spec'
+									})
+								}),
+								expect.objectContaining({
+									Put: expect.objectContaining({
+										Item: expect.objectContaining({
+											pk: 'pk-1',
+											sk: 'sk-0',
+											__ts: expect.any(Number)
+										}),
+										TableName: 'use-dynamodb-spec'
+									})
 								})
-							}),
-							expect.objectContaining({
-								Put: expect.objectContaining({
-									Item: expect.objectContaining({
-										pk: 'pk-1',
-										sk: 'sk-0',
-										__ts: expect.any(Number)
-									}),
-									TableName: 'use-dynamodb-spec'
-								})
-							})
-						])
+							])
+						})
 					})
-				})
-			);
+				);
 
-			expect(item).toEqual(
-				expect.objectContaining({
-					pk: 'pk-1',
-					sk: 'sk-0'
-				})
-			);
+				expect(item).toEqual(
+					expect.objectContaining({
+						pk: 'pk-1',
+						sk: 'sk-0'
+					})
+				);
 
-			expect(onChangeMock).toHaveBeenCalledTimes(2);
-		});
+				expect(onChangeMock).toHaveBeenCalledTimes(2);
+			});
 
-		it('should update sort key with transaction', async () => {
-			await db.batchWrite(createItems(1));
+			it('should update sort key with transaction', async () => {
+				await db.batchWrite(createItems(1));
 
-			const item = await db.update({
-				allowUpdatePartitionAndSort: true,
-				filter: {
-					item: { pk: 'pk-0', sk: 'sk-0' }
-				},
-				updateFunction: item => {
-					return {
-						...item,
+				const item = await db.update({
+					allowUpdatePartitionAndSort: true,
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							sk: 'sk-1'
+						};
+					}
+				});
+
+				expect(db.client.send).toHaveBeenCalledWith(
+					expect.objectContaining({
+						input: expect.objectContaining({
+							TransactItems: expect.arrayContaining([
+								expect.objectContaining({
+									Delete: expect.objectContaining({
+										Key: {
+											pk: 'pk-0',
+											sk: 'sk-0'
+										},
+										TableName: 'use-dynamodb-spec'
+									})
+								}),
+								expect.objectContaining({
+									Put: expect.objectContaining({
+										Item: expect.objectContaining({
+											pk: 'pk-0',
+											sk: 'sk-1',
+											__ts: expect.any(Number)
+										}),
+										TableName: 'use-dynamodb-spec'
+									})
+								})
+							])
+						})
+					})
+				);
+
+				expect(item).toEqual(
+					expect.objectContaining({
+						pk: 'pk-0',
 						sk: 'sk-1'
-					};
-				}
-			});
-
-			expect(db.client.send).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input: expect.objectContaining({
-						TransactItems: expect.arrayContaining([
-							expect.objectContaining({
-								Delete: expect.objectContaining({
-									Key: {
-										pk: 'pk-0',
-										sk: 'sk-0'
-									},
-									TableName: 'use-dynamodb-spec'
-								})
-							}),
-							expect.objectContaining({
-								Put: expect.objectContaining({
-									Item: expect.objectContaining({
-										pk: 'pk-0',
-										sk: 'sk-1',
-										__ts: expect.any(Number)
-									}),
-									TableName: 'use-dynamodb-spec'
-								})
-							})
-						])
 					})
-				})
-			);
+				);
 
-			expect(item).toEqual(
-				expect.objectContaining({
-					pk: 'pk-0',
-					sk: 'sk-1'
-				})
-			);
-
-			expect(onChangeMock).toHaveBeenCalledTimes(2);
+				expect(onChangeMock).toHaveBeenCalledTimes(2);
+			});
 		});
 	});
 });

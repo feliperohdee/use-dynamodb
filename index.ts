@@ -54,6 +54,7 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
+		consistencyCheck?: boolean;
 		filter: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	};
 
@@ -89,8 +90,8 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
-		overrideCreatedAt?: boolean;
 		overwrite?: boolean;
+		useCurrentCreatedAtIfExists?: boolean;
 	};
 
 	export type QueryOptions<R extends Dict = Dict> = {
@@ -115,8 +116,9 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
-		overrideCreatedAt?: boolean;
+		consistencyCheck?: boolean;
 		overwrite?: boolean;
+		useCurrentCreatedAtIfExists?: boolean;
 	};
 
 	export type ScanOptions<R extends Dict = Dict> = {
@@ -159,6 +161,7 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
+		consistencyCheck?: boolean;
 		filter: Omit<Dynamodb.FilterOptions, 'limit' | 'onChunk' | 'startKey'>;
 		updateExpression?: string;
 		updateFunction?: (item: Dynamodb.PersistedItem<R> | Dict, exists: boolean) => Dict;
@@ -347,23 +350,44 @@ class Dynamodb<T extends Dict = Dict> {
 			return null;
 		}
 
-		let conditionExpression = '(attribute_exists(#__ts) AND #__ts = :__ts)';
+		const deleteCommandInput: DeleteCommandInput = {
+			ExpressionAttributeNames: options.attributeNames,
+			ExpressionAttributeValues: options.attributeValues,
+			Key: this.getSchemaKeys(currentItem),
+			ReturnValues: 'ALL_OLD',
+			TableName: this.table
+		};
 
-		if (options.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
+		if (options.consistencyCheck ?? true) {
+			deleteCommandInput.ExpressionAttributeNames = {
+				...deleteCommandInput.ExpressionAttributeNames,
+				'#__pk': this.schema.partition,
+				'#__ts': '__ts'
+			};
+
+			deleteCommandInput.ExpressionAttributeValues = {
+				...deleteCommandInput.ExpressionAttributeValues,
+				':__curr_ts': currentItem.__ts
+			};
+
+			deleteCommandInput.ConditionExpression = '(attribute_exists(#__pk) AND #__ts = :__curr_ts)';
+		} else {
+			deleteCommandInput.ExpressionAttributeNames = {
+				...deleteCommandInput.ExpressionAttributeNames,
+				'#__pk': this.schema.partition
+			};
+
+			deleteCommandInput.ConditionExpression = 'attribute_exists(#__pk)';
 		}
 
-		const res = await this.client.send(
-			new DeleteCommand({
-				ConditionExpression: conditionExpression,
-				ExpressionAttributeNames: { ...options.attributeNames, '#__ts': '__ts' },
-				ExpressionAttributeValues: { ...options.attributeValues, ':__ts': currentItem.__ts },
-				Key: this.getSchemaKeys(currentItem),
-				ReturnValues: 'ALL_OLD',
-				TableName: this.table
-			})
-		);
+		if (options.conditionExpression) {
+			deleteCommandInput.ConditionExpression = concatConditionExpression(
+				deleteCommandInput.ConditionExpression || '',
+				options.conditionExpression
+			);
+		}
 
+		const res = await this.client.send(new DeleteCommand(deleteCommandInput));
 		const deletedItem = (res.Attributes as Dynamodb.PersistedItem<R>) || null;
 
 		if (deletedItem) {
@@ -484,47 +508,38 @@ class Dynamodb<T extends Dict = Dict> {
 		await this.onChange(events as Dynamodb.ChangeEvent<T>[]);
 	}
 
-	async put<R extends Dict = T>(item: Dict, options?: Dynamodb.PutOptions, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
-		// avoid mutation on tests
-		options = { ...options };
-
-		let conditionExpression = '';
-
-		if (!options.overwrite) {
-			conditionExpression = 'attribute_not_exists(#__pk)';
-			options.attributeNames = {
-				...options.attributeNames,
-				'#__pk': this.schema.partition
-			};
-		}
-
-		if (options.conditionExpression) {
-			conditionExpression = concatConditionExpression(conditionExpression, options.conditionExpression);
-		}
-
+	async put<R extends Dict = T>(item: Dict, options: Dynamodb.PutOptions = {}, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
 		const nowISO = new Date(ts).toISOString();
 		const persistedItem = {
 			...item,
-			__createdAt: options.overrideCreatedAt ? (item.__createdAt ?? nowISO) : nowISO,
+			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt ?? nowISO) : nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
 
-		const putCommandInput: PutCommandInput = {
-			Item: persistedItem,
-			TableName: this.table
-		};
+		const putCommandInput: PutCommandInput = options.overwrite
+			? {
+					ExpressionAttributeNames: options.attributeNames,
+					ExpressionAttributeValues: options.attributeValues,
+					Item: persistedItem,
+					TableName: this.table
+				}
+			: {
+					ConditionExpression: 'attribute_not_exists(#__pk)',
+					ExpressionAttributeNames: {
+						...options.attributeNames,
+						'#__pk': this.schema.partition
+					},
+					ExpressionAttributeValues: options.attributeValues,
+					Item: persistedItem,
+					TableName: this.table
+				};
 
-		if (options.attributeNames) {
-			putCommandInput.ExpressionAttributeNames = options.attributeNames;
-		}
-
-		if (options.attributeValues) {
-			putCommandInput.ExpressionAttributeValues = options.attributeValues;
-		}
-
-		if (conditionExpression) {
-			putCommandInput.ConditionExpression = conditionExpression;
+		if (options.conditionExpression) {
+			putCommandInput.ConditionExpression = concatConditionExpression(
+				putCommandInput.ConditionExpression || '',
+				options.conditionExpression
+			);
 		}
 
 		await this.client.send(new PutCommand(putCommandInput));
@@ -553,16 +568,10 @@ class Dynamodb<T extends Dict = Dict> {
 
 		const queryCommandInput: QueryCommandInput = {
 			ConsistentRead: options.consistentRead ?? false,
+			ExpressionAttributeNames: options.attributeNames,
+			ExpressionAttributeValues: options.attributeValues,
 			TableName: this.table
 		};
-
-		if (_.size(options.attributeNames) > 0) {
-			queryCommandInput.ExpressionAttributeNames = options.attributeNames;
-		}
-
-		if (_.size(options.attributeValues) > 0) {
-			queryCommandInput.ExpressionAttributeValues = options.attributeValues;
-		}
 
 		if (_.isFinite(options.chunkLimit)) {
 			queryCommandInput.Limit = options.chunkLimit;
@@ -707,51 +716,61 @@ class Dynamodb<T extends Dict = Dict> {
 	async replace<R extends Dict = T>(
 		item: Dict,
 		replacedItem: Dynamodb.PersistedItem,
-		options?: Dynamodb.ReplaceOptions,
+		options: Dynamodb.ReplaceOptions = {},
 		ts: number = _.now()
 	): Promise<Dynamodb.PersistedItem<R>> {
-		// avoid mutation on tests
-		options = { ...options };
-
 		const nowISO = new Date(ts).toISOString();
 		const newItem = {
 			...item,
-			__createdAt: options.overrideCreatedAt ? (item.__createdAt ?? replacedItem.__createdAt) : replacedItem.__createdAt,
+			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt ?? replacedItem.__createdAt) : replacedItem.__createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
 
 		const deleteCommandInput: DeleteCommandInput = {
-			ConditionExpression: '#__ts = :__ts',
-			ExpressionAttributeNames: { '#__ts': '__ts' },
-			ExpressionAttributeValues: { ':__ts': replacedItem.__ts },
 			Key: this.getSchemaKeys(replacedItem),
 			TableName: this.table
 		};
 
-		const putCommandInput: PutCommandInput = {
-			Item: newItem,
-			TableName: this.table
-		};
+		if (options.consistencyCheck ?? true) {
+			deleteCommandInput.ExpressionAttributeNames = {
+				...deleteCommandInput.ExpressionAttributeNames,
+				'#__pk': this.schema.partition,
+				'#__ts': '__ts'
+			};
 
-		if (!options.overwrite) {
-			putCommandInput.ConditionExpression = 'attribute_not_exists(#__pk)';
-			putCommandInput.ExpressionAttributeNames = {
-				...putCommandInput.ExpressionAttributeNames,
+			deleteCommandInput.ExpressionAttributeValues = {
+				...deleteCommandInput.ExpressionAttributeValues,
+				':__curr_ts': replacedItem.__ts
+			};
+
+			deleteCommandInput.ConditionExpression = '(attribute_exists(#__pk) AND #__ts = :__curr_ts)';
+		} else {
+			deleteCommandInput.ExpressionAttributeNames = {
+				...deleteCommandInput.ExpressionAttributeNames,
 				'#__pk': this.schema.partition
 			};
+
+			deleteCommandInput.ConditionExpression = 'attribute_exists(#__pk)';
 		}
 
-		if (_.size(options.attributeNames) > 0) {
-			putCommandInput.ExpressionAttributeNames = {
-				...putCommandInput.ExpressionAttributeNames,
-				...options.attributeNames
-			};
-		}
-
-		if (_.size(options.attributeValues) > 0) {
-			putCommandInput.ExpressionAttributeValues = options.attributeValues;
-		}
+		const putCommandInput: PutCommandInput = options.overwrite
+			? {
+					ExpressionAttributeNames: options.attributeNames,
+					ExpressionAttributeValues: options.attributeValues,
+					Item: newItem,
+					TableName: this.table
+				}
+			: {
+					ConditionExpression: 'attribute_not_exists(#__pk)',
+					ExpressionAttributeNames: {
+						...options.attributeNames,
+						'#__pk': this.schema.partition
+					},
+					ExpressionAttributeValues: options.attributeValues,
+					Item: newItem,
+					TableName: this.table
+				};
 
 		if (options.conditionExpression) {
 			putCommandInput.ConditionExpression = concatConditionExpression(
@@ -963,9 +982,6 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	async update<R extends Dict = T>(options: Dynamodb.UpdateOptions<R>, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
-		// avoid mutation on tests
-		options = { ...options };
-
 		const currentItem = await this.get(options.filter);
 
 		if (!currentItem && !options.upsert) {
@@ -976,56 +992,57 @@ class Dynamodb<T extends Dict = Dict> {
 			throw new Error('Existing item or filter.item must be provided');
 		}
 
-		let conditionExpression = '';
-		let referenceKey = this.getSchemaKeys(currentItem || options.filter.item!);
-
-		if (options.conditionExpression) {
-			conditionExpression = options.conditionExpression;
-		}
+		const referenceKey = this.getSchemaKeys(currentItem || options.filter.item!);
 
 		// start of updateExpression
 		if (options.updateExpression) {
 			const nowISO = new Date(ts).toISOString();
+			const updateCommandInput: UpdateCommandInput = options.upsert
+				? {
+						ExpressionAttributeNames: options.attributeNames,
+						ExpressionAttributeValues: options.attributeValues,
+						Key: referenceKey,
+						ReturnValues: 'ALL_NEW',
+						TableName: this.table,
+						UpdateExpression: options.updateExpression
+					}
+				: {
+						ConditionExpression: 'attribute_exists(#__pk)',
+						ExpressionAttributeNames: {
+							...options.attributeNames,
+							'#__pk': this.schema.partition
+						},
+						ExpressionAttributeValues: options.attributeValues,
+						Key: referenceKey,
+						ReturnValues: 'ALL_NEW',
+						TableName: this.table,
+						UpdateExpression: options.updateExpression
+					};
 
-			options.updateExpression = concatUpdateExpression(
-				options.updateExpression,
+			updateCommandInput.UpdateExpression = concatUpdateExpression(
+				updateCommandInput.UpdateExpression || '',
 				'SET #__cr = if_not_exists(#__cr, :__cr), #__ts = :__ts, #__up = :__up'
 			);
 
-			options.attributeNames = {
-				...options.attributeNames,
+			updateCommandInput.ExpressionAttributeNames = {
+				...updateCommandInput.ExpressionAttributeNames,
 				'#__cr': '__createdAt',
 				'#__ts': '__ts',
 				'#__up': '__updatedAt'
 			};
 
-			options.attributeValues = {
-				...options.attributeValues,
+			updateCommandInput.ExpressionAttributeValues = {
+				...updateCommandInput.ExpressionAttributeValues,
 				':__cr': nowISO,
 				':__up': nowISO,
 				':__ts': ts
 			};
 
-			if (!options.upsert) {
-				// for updateExpression we check for existence, not last update timestamp because updateExpression is atomic
-				conditionExpression = concatConditionExpression('attribute_exists(#__pk)', conditionExpression);
-				options.attributeNames = {
-					...options.attributeNames,
-					'#__pk': this.schema.partition
-				};
-			}
-
-			const updateCommandInput: UpdateCommandInput = {
-				ExpressionAttributeNames: options.attributeNames,
-				ExpressionAttributeValues: options.attributeValues,
-				Key: referenceKey,
-				ReturnValues: 'ALL_NEW',
-				TableName: this.table,
-				UpdateExpression: options.updateExpression
-			};
-
-			if (conditionExpression) {
-				updateCommandInput.ConditionExpression = conditionExpression;
+			if (options.conditionExpression) {
+				updateCommandInput.ConditionExpression = concatConditionExpression(
+					updateCommandInput.ConditionExpression || '',
+					options.conditionExpression
+				);
 			}
 
 			const res = await this.client.send(new UpdateCommand(updateCommandInput));
@@ -1060,43 +1077,54 @@ class Dynamodb<T extends Dict = Dict> {
 					{
 						attributeNames: options.attributeNames,
 						attributeValues: options.attributeValues,
-						conditionExpression,
-						overrideCreatedAt: true
+						conditionExpression: options.conditionExpression,
+						useCurrentCreatedAtIfExists: true
 					},
 					ts
 				);
 			}
 		}
 
-		if (!options.upsert) {
-			// for updateFunction (not upsert) we check for existence and last update timestamp to ensure atomicity
-			conditionExpression = concatConditionExpression('(attribute_exists(#__pk) AND #__ts = :__curr_ts)', conditionExpression);
-			options.attributeNames = {
-				...options.attributeNames,
-				'#__pk': this.schema.partition
+		const putOptions: Dynamodb.PutOptions = options.upsert
+			? {
+					attributeNames: options.attributeNames,
+					attributeValues: options.attributeValues,
+					overwrite: true,
+					useCurrentCreatedAtIfExists: true
+				}
+			: {
+					attributeNames: {
+						...options.attributeNames,
+						'#__pk': this.schema.partition
+					},
+					attributeValues: options.attributeValues,
+					conditionExpression: 'attribute_exists(#__pk)',
+					overwrite: true,
+					useCurrentCreatedAtIfExists: true
+				};
+
+		if (options.consistencyCheck ?? true) {
+			putOptions.conditionExpression = options.upsert
+				? '(attribute_not_exists(#__pk) OR #__ts = :__curr_ts)'
+				: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)';
+
+			putOptions.attributeNames = {
+				...putOptions.attributeNames,
+				'#__pk': this.schema.partition,
+				'#__ts': '__ts'
 			};
-		} else {
-			// for updateFunction (with possible upsert) we check for non existence or last update timestamp to ensure atomicity
-			conditionExpression = concatConditionExpression('(attribute_not_exists(#__ts) OR #__ts = :__curr_ts)', conditionExpression);
+
+			putOptions.attributeValues = {
+				...putOptions.attributeValues,
+				':__curr_ts': currentItem?.__ts ?? 0
+			};
 		}
 
-		options.attributeNames = {
-			...options.attributeNames,
-			'#__ts': '__ts'
-		};
+		if (options.conditionExpression) {
+			putOptions.conditionExpression = concatConditionExpression(putOptions.conditionExpression || '', options.conditionExpression);
+		}
 
-		options.attributeValues = {
-			...options.attributeValues,
-			':__curr_ts': currentItem?.__ts ?? 0
-		};
-
-		return this.put(updatedItem, {
-			attributeNames: options.attributeNames,
-			attributeValues: options.attributeValues,
-			conditionExpression,
-			overrideCreatedAt: true,
-			overwrite: true
-		});
+		return this.put(updatedItem, putOptions);
 	}
 
 	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {
