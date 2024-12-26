@@ -28,7 +28,7 @@ const createItems = (count: number) => {
 const factory = ({ onChange }: { onChange: Mock }) => {
 	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
-		region: 'us-east-1',
+		region: process.env.AWS_REGION || '',
 		secretAccessKey: process.env.AWS_SECRET_KEY || '',
 		indexes: [
 			{
