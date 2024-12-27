@@ -28,8 +28,6 @@ const createItems = (count: number) => {
 const factory = ({ onChange }: { onChange: Mock }) => {
 	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
-		region: process.env.AWS_REGION || '',
-		secretAccessKey: process.env.AWS_SECRET_KEY || '',
 		indexes: [
 			{
 				name: 'ls-index',
@@ -46,7 +44,12 @@ const factory = ({ onChange }: { onChange: Mock }) => {
 			}
 		],
 		onChange,
-		schema: { partition: 'pk', sort: 'sk' },
+		region: process.env.AWS_REGION || '',
+		schema: {
+			partition: 'pk',
+			sort: 'sk'
+		},
+		secretAccessKey: process.env.AWS_SECRET_KEY || '',
 		table: 'use-dynamodb-spec'
 	});
 };

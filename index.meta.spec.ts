@@ -1,0 +1,255 @@
+import _ from 'lodash';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+
+import Db from './index';
+
+type Item = {
+	foo: string;
+	gsiPk: string;
+	gsiSk: string;
+	lsiSk: string;
+	pk: string;
+	sk: string;
+};
+
+const createItems = (count: number) => {
+	return _.times(count, index => {
+		return {
+			bar: `bar-${index}`,
+			foo: `foo-${index}`,
+			sk: `sk-${index}`,
+			pk: `pk-${index % 2}`
+		};
+	});
+};
+
+const factory = () => {
+	return new Db<Item>({
+		accessKeyId: process.env.AWS_ACCESS_KEY || '',
+		metaFields: {
+			'pk-bar': ['pk', 'bar']
+		},
+		region: process.env.AWS_REGION || '',
+		schema: {
+			partition: 'pk',
+			sort: 'sk'
+		},
+		secretAccessKey: process.env.AWS_SECRET_KEY || '',
+		table: 'use-dynamodb-spec'
+	});
+};
+
+describe('/index.ts', () => {
+	let db: Db<Item>;
+
+	beforeAll(async () => {
+		db = factory();
+
+		await db.createTable();
+	});
+
+	beforeEach(() => {
+		db = factory();
+	});
+
+	describe('batchGet / batchWrite', () => {
+		afterEach(async () => {
+			await db.clear();
+		});
+
+		it('should batch write and batch get', async () => {
+			const batchWriteItems = await db.batchWrite(createItems(2));
+			expect(
+				_.every(batchWriteItems, item => {
+					return _.isNumber(item.__ts);
+				})
+			).toBeTruthy();
+
+			const batchGetItems = await db.batchGet(batchWriteItems);
+
+			batchGetItems.sort((a, b) => {
+				return a.sk.localeCompare(b.sk);
+			});
+
+			expect(batchGetItems).toHaveLength(2);
+			expect(batchGetItems[0]['pk-bar']).toEqual('pk-0#bar-0');
+			expect(batchGetItems[1]['pk-bar']).toEqual('pk-1#bar-1');
+		});
+	});
+
+	describe('generateMetaFields', () => {
+		it('should generate', () => {
+			const item = {
+				bar: 'bar-0',
+				foo: 'foo-0',
+				pk: 'pk-0',
+				sk: 'sk-0'
+			};
+
+			// @ts-expect-error
+			const metaFields = db.generateMetaFields(item);
+
+			expect(metaFields['pk-bar']).toEqual('pk-0#bar-0');
+		});
+
+		it('should generate partial', () => {
+			const item = {
+				pk: 'pk-0',
+				sk: 'sk-0'
+			};
+
+			// @ts-expect-error
+			const metaFields = db.generateMetaFields(item);
+
+			expect(metaFields['pk-bar']).toEqual('pk-0');
+		});
+	});
+
+	describe('put', () => {
+		afterEach(async () => {
+			await db.clear();
+		});
+
+		it('should put item', async () => {
+			const res = await db.put({
+				bar: 'bar-0',
+				foo: 'foo-0',
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			expect(res['pk-bar']).toEqual('pk-0#bar-0');
+		});
+	});
+
+	describe('replace', () => {
+		afterEach(async () => {
+			await db.clear();
+		});
+
+		it('should replace item', async () => {
+			const replaceItem = await db.put({
+				bar: 'bar-0',
+				foo: 'foo-0',
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			const res = await db.replace(
+				{
+					bar: 'bar-1',
+					foo: 'foo-1',
+					pk: 'pk-0',
+					sk: 'sk-1'
+				},
+				replaceItem
+			);
+
+			expect(res['pk-bar']).toEqual('pk-0#bar-1');
+		});
+	});
+
+	describe('update', () => {
+		beforeEach(async () => {
+			await db.put({
+				bar: 'bar-0',
+				foo: 'foo-0',
+				pk: 'pk-0',
+				sk: 'sk-0'
+			});
+
+			vi.spyOn(db.client, 'send');
+		});
+
+		afterEach(async () => {
+			await db.clear();
+		});
+
+		describe('updateExpression', () => {
+			it('should not update meta', async () => {
+				const res = await db.update({
+					attributeNames: { '#foo': 'foo' },
+					attributeValues: { ':foo': 'foo-1' },
+					filter: {
+						item: { pk: 'pk-0' }
+					},
+					updateExpression: 'SET #foo = :foo'
+				});
+
+				// get / update
+				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(res['pk-bar']).toEqual('pk-0#bar-0');
+			});
+
+			it('should update meta', async () => {
+				const res = await db.update({
+					attributeNames: { '#bar': 'bar' },
+					attributeValues: { ':bar': 'bar-1' },
+					filter: {
+						item: { pk: 'pk-0' }
+					},
+					updateExpression: 'SET #bar = :bar'
+				});
+
+				// get / update
+				expect(db.client.send).toHaveBeenCalledTimes(3);
+				expect(db.client.send).toHaveBeenCalledWith(
+					expect.objectContaining({
+						input: expect.objectContaining({
+							ExpressionAttributeNames: {
+								'#pk_bar': 'pk-bar'
+							},
+							ExpressionAttributeValues: {
+								':pk_bar': 'pk-0#bar-1'
+							},
+							Key: { pk: 'pk-0', sk: 'sk-0' },
+							ReturnValues: 'ALL_NEW',
+							TableName: 'use-dynamodb-spec',
+							UpdateExpression: 'SET #pk_bar = :pk_bar'
+						})
+					})
+				);
+
+				expect(res['pk-bar']).toEqual('pk-0#bar-1');
+			});
+		});
+
+		describe('updateFunction', () => {
+			it('should not update meta', async () => {
+				const res = await db.update({
+					filter: {
+						item: { pk: 'pk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					}
+				});
+
+				// get / update
+				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(res['pk-bar']).toEqual('pk-0#bar-0');
+			});
+
+			it('should update meta', async () => {
+				const res = await db.update({
+					filter: {
+						item: { pk: 'pk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							bar: 'bar-1'
+						};
+					}
+				});
+
+				// get / update
+				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(res['pk-bar']).toEqual('pk-0#bar-1');
+			});
+		});
+	});
+});

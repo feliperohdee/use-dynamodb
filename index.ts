@@ -50,6 +50,20 @@ namespace Dynamodb {
 		type: ChangeType;
 	};
 
+	export type ConstructorOptions<T extends Dict = Dict> = {
+		accessKeyId: string;
+		indexes?: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
+		metaFields?: Record<string, string[]>;
+		metaFieldsJoiner?: string;
+		onChange?: Dynamodb.OnChange<T>;
+		region: string;
+		retryTimes?: number;
+		retryStrategy?: (attempt: number) => number;
+		schema: Dynamodb.TableSchema;
+		secretAccessKey: string;
+		table: string;
+	};
+
 	export type DeleteOptions = {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
@@ -174,20 +188,12 @@ class Dynamodb<T extends Dict = Dict> {
 	public indexes: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
 	public schema: Dynamodb.TableSchema;
 
+	private metaFields: Record<string, string[]>;
+	private metaFieldsJoiner: string;
 	private onChange: Dynamodb.OnChange<T> | null;
 	private table: string;
 
-	constructor(options: {
-		accessKeyId: string;
-		indexes?: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
-		onChange?: Dynamodb.OnChange<T>;
-		region: string;
-		retryTimes?: number;
-		retryStrategy?: (attempt: number) => number;
-		schema: Dynamodb.TableSchema;
-		secretAccessKey: string;
-		table: string;
-	}) {
+	constructor(options: Dynamodb.ConstructorOptions<T>) {
 		this.client = DynamoDBDocumentClient.from(
 			new DynamoDBClient({
 				credentials: {
@@ -206,6 +212,8 @@ class Dynamodb<T extends Dict = Dict> {
 		);
 
 		this.indexes = options.indexes || [];
+		this.metaFields = options.metaFields || {};
+		this.metaFieldsJoiner = options.metaFieldsJoiner ?? '#';
 		this.onChange = null;
 		this.schema = options.schema;
 		this.table = options.table;
@@ -281,8 +289,11 @@ class Dynamodb<T extends Dict = Dict> {
 	async batchWrite<R extends Dict = T>(items: Dict[], ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>[]> {
 		const nowISO = new Date(ts).toISOString();
 		const persistedItems = _.map(items, item => {
+			const metaFieldsValues = this.generateMetaFields(item);
+
 			return {
 				...item,
+				...metaFieldsValues,
 				__createdAt: nowISO,
 				__ts: ts,
 				__updatedAt: nowISO
@@ -450,6 +461,24 @@ class Dynamodb<T extends Dict = Dict> {
 		return res;
 	}
 
+	private generateMetaFields(item: Dict): Dict {
+		const metaFieldsValues: Dict = {};
+
+		_.forEach(this.metaFields, (sourceFields, fieldName) => {
+			metaFieldsValues[fieldName] = _.chain(sourceFields)
+				.map(field => {
+					return item[field];
+				})
+				.filter(value => {
+					return !_.isUndefined(value);
+				})
+				.join(this.metaFieldsJoiner)
+				.value();
+		});
+
+		return metaFieldsValues;
+	}
+
 	async get<R extends Dict = T>(options: Dynamodb.GetOptions): Promise<Dynamodb.PersistedItem<R> | null> {
 		const { items } = await this.filter<R>({
 			...options,
@@ -510,8 +539,10 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async put<R extends Dict = T>(item: Dict, options: Dynamodb.PutOptions = {}, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
 		const nowISO = new Date(ts).toISOString();
+		const metaFieldsValues = this.generateMetaFields(item);
 		const persistedItem = {
 			...item,
+			...metaFieldsValues,
 			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt ?? nowISO) : nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
@@ -720,8 +751,10 @@ class Dynamodb<T extends Dict = Dict> {
 		ts: number = _.now()
 	): Promise<Dynamodb.PersistedItem<R>> {
 		const nowISO = new Date(ts).toISOString();
+		const metaFieldsValues = this.generateMetaFields(item);
 		const newItem = {
 			...item,
+			...metaFieldsValues,
 			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt ?? replacedItem.__createdAt) : replacedItem.__createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
@@ -1045,8 +1078,76 @@ class Dynamodb<T extends Dict = Dict> {
 				);
 			}
 
-			const res = await this.client.send(new UpdateCommand(updateCommandInput));
-			const updatedItem = res.Attributes as Dynamodb.PersistedItem<R>;
+			let res = await this.client.send(new UpdateCommand(updateCommandInput));
+			let updatedItem = res.Attributes as Dynamodb.PersistedItem<R>;
+
+			// Generate and update metaFields after the update operation
+			if (_.size(this.metaFields) > 0) {
+				const attributeNamesInUpdateExpression = updateCommandInput.UpdateExpression.match(/#\w+/g);
+				const affectedFields = _.reduce(
+					attributeNamesInUpdateExpression,
+					(reduction, name) => {
+						const field = updateCommandInput.ExpressionAttributeNames?.[name];
+
+						if (field) {
+							return reduction.add(field);
+						}
+
+						return reduction;
+					},
+					new Set<string>()
+				);
+
+				const affectedMetaFields = _.some(this.metaFields, fields => {
+					return _.some(fields, field => {
+						return affectedFields.has(field);
+					});
+				});
+
+				if (affectedMetaFields) {
+					const metaFieldsValues = this.generateMetaFields(updatedItem);
+					const toSnakeCase = _.memoize((key: string) => {
+						return _.snakeCase(key);
+					});
+
+					if (_.size(metaFieldsValues)) {
+						const res = await this.client.send(
+							new UpdateCommand({
+								ExpressionAttributeNames: _.reduce<Dict, Record<string, string>>(
+									metaFieldsValues,
+									(reduction, value, key) => {
+										reduction[`#${toSnakeCase(key)}`] = key;
+
+										return reduction;
+									},
+									{}
+								),
+								ExpressionAttributeValues: _.reduce<Dict, Dict>(
+									metaFieldsValues,
+									(reduction, value, key) => {
+										reduction[`:${toSnakeCase(key)}`] = value;
+
+										return reduction;
+									},
+									{}
+								),
+								Key: this.getSchemaKeys(updatedItem),
+								ReturnValues: 'ALL_NEW',
+								TableName: this.table,
+								UpdateExpression:
+									'SET ' +
+									_.map(metaFieldsValues, (value, key) => {
+										key = toSnakeCase(key);
+
+										return `#${key} = :${key}`;
+									}).join(', ')
+							})
+						);
+
+						updatedItem = res.Attributes as Dynamodb.PersistedItem<R>;
+					}
+				}
+			}
 
 			await this.notifyChanges([
 				{
