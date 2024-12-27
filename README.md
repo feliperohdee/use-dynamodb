@@ -18,6 +18,7 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🔒 Conditional updates and transactions
 - 🎯 Change tracking with callbacks
 - 🔄 Custom retry strategy with exponential backoff
+- 🔗 Automatic metadata field generation
 
 ## 📚 Documentation
 
@@ -33,6 +34,23 @@ yarn add use-dynamodb
 ## 🛠️ Usage
 
 ### Initialization
+
+The library supports several configuration options for customizing its behavior:
+
+#### Basic Configuration
+
+- `accessKeyId` and `secretAccessKey`: Your AWS credentials
+- `region`: AWS region for DynamoDB
+- `table`: Name of your DynamoDB table
+- `schema`: Defines the table's partition and sort keys
+- `indexes`: Array of GSI (Global Secondary Indexes) and LSI (Local Secondary Indexes) configurations
+
+#### Metadata Configuration
+
+- `metaFields`: An object that defines automatic metadata field generation. Each key is the name of a metadata field to generate, and its value is an array of source fields to combine.
+- `metaFieldsJoiner`: The string used to join the source fields (defaults to '#')
+
+For example, if you have items with `title`, `subtitle`, and tags-related fields, you can automatically generate combined fields for better searching and filtering:
 
 ```typescript
 import Dynamodb from 'use-dynamodb';
@@ -67,6 +85,11 @@ const db = new Dynamodb<Item>({
 			sortType: 'S'
 		}
 	],
+	// Automatic metadata field generation
+	metaFields: {
+		'pk-foo': ['pk', 'foo'], // Combines pk and foo
+	},
+	metaFieldsJoiner: '#', // Uses # as separator
 	onChange: async events => {
 		// Optional callback for tracking changes
 		console.log('Changes:', events);

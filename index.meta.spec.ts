@@ -215,6 +215,10 @@ describe('/index.ts', () => {
 		});
 
 		describe('updateFunction', () => {
+			beforeEach(() => {
+				vi.spyOn(db, 'put');
+			});
+
 			it('should not update meta', async () => {
 				const res = await db.update({
 					filter: {
@@ -230,6 +234,30 @@ describe('/index.ts', () => {
 
 				// get / update
 				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						bar: 'bar-0',
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						attributeNames: {
+							'#__pk': 'pk',
+							'#__ts': '__ts'
+						},
+						attributeValues: {
+							':__curr_ts': expect.any(Number)
+						},
+						conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
 				expect(res['pk-bar']).toEqual('pk-0#bar-0');
 			});
 
@@ -248,6 +276,30 @@ describe('/index.ts', () => {
 
 				// get / update
 				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						bar: 'bar-1',
+						foo: 'foo-0',
+						pk: 'pk-0',
+						sk: 'sk-0'
+					},
+					{
+						attributeNames: {
+							'#__pk': 'pk',
+							'#__ts': '__ts'
+						},
+						attributeValues: {
+							':__curr_ts': expect.any(Number)
+						},
+						conditionExpression: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
 				expect(res['pk-bar']).toEqual('pk-0#bar-1');
 			});
 		});

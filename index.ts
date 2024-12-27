@@ -292,8 +292,8 @@ class Dynamodb<T extends Dict = Dict> {
 			const metaFieldsValues = this.generateMetaFields(item);
 
 			return {
-				...item,
 				...metaFieldsValues,
+				...item,
 				__createdAt: nowISO,
 				__ts: ts,
 				__updatedAt: nowISO
@@ -541,8 +541,8 @@ class Dynamodb<T extends Dict = Dict> {
 		const nowISO = new Date(ts).toISOString();
 		const metaFieldsValues = this.generateMetaFields(item);
 		const persistedItem = {
-			...item,
 			...metaFieldsValues,
+			...item,
 			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt ?? nowISO) : nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
@@ -753,8 +753,8 @@ class Dynamodb<T extends Dict = Dict> {
 		const nowISO = new Date(ts).toISOString();
 		const metaFieldsValues = this.generateMetaFields(item);
 		const newItem = {
-			...item,
 			...metaFieldsValues,
+			...item,
 			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt ?? replacedItem.__createdAt) : replacedItem.__createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
@@ -1225,7 +1225,10 @@ class Dynamodb<T extends Dict = Dict> {
 			putOptions.conditionExpression = concatConditionExpression(putOptions.conditionExpression || '', options.conditionExpression);
 		}
 
-		return this.put(updatedItem, putOptions);
+		const metaFields = this.generateMetaFields(updatedItem);
+		const metaFieldsKeys = _.keys(metaFields);
+
+		return this.put(_.omit(updatedItem, metaFieldsKeys), putOptions);
 	}
 
 	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {
