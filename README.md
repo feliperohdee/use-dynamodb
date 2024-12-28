@@ -18,7 +18,7 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🔒 Conditional updates and transactions
 - 🎯 Change tracking with callbacks
 - 🔄 Custom retry strategy with exponential backoff
-- 🔗 Automatic metadata field generation
+- 🔗 Automatic metadata attribute generation
 
 ## 📚 Documentation
 
@@ -47,10 +47,10 @@ The library supports several configuration options for customizing its behavior:
 
 #### Metadata Configuration
 
-- `metaFields`: An object that defines automatic metadata field generation. Each key is the name of a metadata field to generate, and its value is an array of source fields to combine.
-- `metaFieldsJoiner`: The string used to join the source fields (defaults to '#')
+- `metaAttributes`: An object that defines automatic metadata attribute generation. Each key is the name of a metadata attribute to generate, and its value is an array of source attributes to combine.
+- `metaAttributesJoiner`: The string used to join the source attributes (defaults to '#')
 
-For example, if you have items with `title`, `subtitle`, and tags-related fields, you can automatically generate combined fields for better searching and filtering:
+For example, if you have items with `title`, `subtitle`, and tags-related attributes, you can automatically generate combined attributes for better searching and filtering:
 
 ```typescript
 import Dynamodb from 'use-dynamodb';
@@ -85,11 +85,11 @@ const db = new Dynamodb<Item>({
 			sortType: 'S'
 		}
 	],
-	// Automatic metadata field generation
-	metaFields: {
+	// Automatic metadata attribute generation
+	metaAttributes: {
 		'pk-foo': ['pk', 'foo'] // Combines pk and foo
 	},
-	metaFieldsJoiner: '#', // Uses # as separator
+	metaAttributesJoiner: '#', // Uses # as separator
 	onChange: async events => {
 		// Optional callback for tracking changes
 		console.log('Changes:', events);
@@ -418,7 +418,7 @@ yarn test
 
 ## 📝 Notes
 
-- The library automatically handles optimistic locking using the `__ts` field
+- The library automatically handles optimistic locking using the `__ts` attribute
 - All write operations (put, update, delete) trigger change events if an onChange handler is provided
 - Batch operations automatically handle chunking according to DynamoDB limits
 - The library provides built-in retry strategy with exponential backoff

@@ -26,7 +26,7 @@ const createItems = (count: number) => {
 const factory = () => {
 	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
-		metaFields: {
+		metaAttributes: {
 			'pk-bar': ['pk', 'bar']
 		},
 		region: process.env.AWS_REGION || '',
@@ -77,7 +77,7 @@ describe('/index.ts', () => {
 		});
 	});
 
-	describe('generateMetaFields', () => {
+	describe('generateMetaAttributes', () => {
 		it('should generate', () => {
 			const item = {
 				bar: 'bar-0',
@@ -87,9 +87,9 @@ describe('/index.ts', () => {
 			};
 
 			// @ts-expect-error
-			const metaFields = db.generateMetaFields(item);
+			const metaAttributes = db.generateMetaAttributes(item);
 
-			expect(metaFields['pk-bar']).toEqual('pk-0#bar-0');
+			expect(metaAttributes['pk-bar']).toEqual('pk-0#bar-0');
 		});
 
 		it('should generate partial', () => {
@@ -99,9 +99,9 @@ describe('/index.ts', () => {
 			};
 
 			// @ts-expect-error
-			const metaFields = db.generateMetaFields(item);
+			const metaAttributes = db.generateMetaAttributes(item);
 
-			expect(metaFields['pk-bar']).toEqual('pk-0');
+			expect(metaAttributes['pk-bar']).toEqual('pk-0');
 		});
 	});
 
@@ -181,7 +181,7 @@ describe('/index.ts', () => {
 				expect(res['pk-bar']).toEqual('pk-0#bar-0');
 			});
 
-			it('should not update meta if have settled all meta fields', async () => {
+			it('should not update meta if have settled all meta attributes', async () => {
 				const res = await db.update({
 					attributeNames: {
 						'#bar': 'bar',
