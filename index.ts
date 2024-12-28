@@ -53,8 +53,7 @@ namespace Dynamodb {
 	export type ConstructorOptions<T extends Dict = Dict> = {
 		accessKeyId: string;
 		indexes?: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
-		metaAttributes?: Record<string, string[]>;
-		metaAttributesJoiner?: string;
+		metaAttributes?: Record<string, string[] | MetaAttributeOptions>;
 		onChange?: Dynamodb.OnChange<T>;
 		region: string;
 		retryTimes?: number;
@@ -92,6 +91,11 @@ namespace Dynamodb {
 
 	export type GetOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	export type GetLastOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
+	export type MetaAttributeOptions = {
+		attributes: string[];
+		joiner: string;
+		transform?: (attribute: string, value: any) => string | undefined;
+	};
 
 	export type MultiResponse<T extends Dict = Dict> = {
 		count: number;
@@ -186,10 +190,9 @@ namespace Dynamodb {
 class Dynamodb<T extends Dict = Dict> {
 	public client: DynamoDBDocumentClient;
 	public indexes: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
+	public metaAttributes: Record<string, Dynamodb.MetaAttributeOptions>;
 	public schema: Dynamodb.TableSchema;
 
-	private metaAttributes: Record<string, string[]>;
-	private metaAttributesJoiner: string;
 	private onChange: Dynamodb.OnChange<T> | null;
 	private table: string;
 
@@ -212,8 +215,9 @@ class Dynamodb<T extends Dict = Dict> {
 		);
 
 		this.indexes = options.indexes || [];
-		this.metaAttributes = options.metaAttributes || {};
-		this.metaAttributesJoiner = options.metaAttributesJoiner ?? '#';
+		this.metaAttributes = _.mapValues(options.metaAttributes || {}, (value, key) => {
+			return _.isArray(value) ? { attributes: value, joiner: '#' } : value;
+		});
 		this.onChange = null;
 		this.schema = options.schema;
 		this.table = options.table;
@@ -464,15 +468,19 @@ class Dynamodb<T extends Dict = Dict> {
 	private generateMetaAttributes(item: Dict): Dict {
 		const metaAttributesValues: Dict = {};
 
-		_.forEach(this.metaAttributes, (attributes, key) => {
+		_.forEach(this.metaAttributes, ({ attributes, joiner, transform }, key) => {
 			metaAttributesValues[key] = _.chain(attributes)
 				.map(attribute => {
-					return item[attribute];
+					let value = item[attribute];
+
+					if (_.isFunction(transform)) {
+						value = _.trim(transform(attribute, value)) || value;
+					}
+
+					return _.toString(value);
 				})
-				.filter(value => {
-					return !_.isUndefined(value);
-				})
-				.join(this.metaAttributesJoiner)
+				.compact()
+				.join(joiner)
 				.value();
 		});
 
@@ -1098,7 +1106,7 @@ class Dynamodb<T extends Dict = Dict> {
 					new Set<string>()
 				);
 
-				const affectedMetaAttributes = _.some(this.metaAttributes, (attributes, key) => {
+				const affectedMetaAttributes = _.some(this.metaAttributes, ({ attributes }, key) => {
 					// if updatedAttributes has the key, it means the attribute is already updated
 					if (updatedAttributes.has(key)) {
 						return false;

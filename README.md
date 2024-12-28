@@ -18,7 +18,7 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🔒 Conditional updates and transactions
 - 🎯 Change tracking with callbacks
 - 🔄 Custom retry strategy with exponential backoff
-- 🔗 Automatic metadata attribute generation
+- 🔗 Advanced metadata attribute generation with custom transformations
 
 ## 📚 Documentation
 
@@ -45,12 +45,31 @@ The library supports several configuration options for customizing its behavior:
 - `schema`: Defines the table's partition and sort keys
 - `indexes`: Array of GSI (Global Secondary Indexes) and LSI (Local Secondary Indexes) configurations
 
-#### Metadata Configuration
+#### Enhanced Metadata Configuration
 
-- `metaAttributes`: An object that defines automatic metadata attribute generation. Each key is the name of a metadata attribute to generate, and its value is an array of source attributes to combine.
-- `metaAttributesJoiner`: The string used to join the source attributes (defaults to '#')
+The `metaAttributes` configuration now supports two formats for more flexible metadata generation:
 
-For example, if you have items with `title`, `subtitle`, and tags-related attributes, you can automatically generate combined attributes for better searching and filtering:
+1. Simple Array Format:
+
+```typescript
+metaAttributes: {
+  'combined-field': ['field1', 'field2']  // Uses default joiner '#'
+}
+```
+
+2. Advanced Options Format:
+
+```typescript
+metaAttributes: {
+  'combined-field': {
+    attributes: ['field1', 'field2'],
+    joiner: '-',  // Custom joiner
+    transform: (attribute: string, value: any) => string | undefined  // Optional transform function
+  }
+}
+```
+
+Example with both formats:
 
 ```typescript
 import Dynamodb from 'use-dynamodb';
@@ -58,10 +77,9 @@ import Dynamodb from 'use-dynamodb';
 type Item = {
 	pk: string;
 	sk: string;
-	gsiPk: string;
-	gsiSk: string;
-	lsiSk: string;
-	foo: string;
+	title: string;
+	category: string;
+	tags: string[];
 };
 
 const db = new Dynamodb<Item>({
@@ -70,32 +88,32 @@ const db = new Dynamodb<Item>({
 	region: 'us-east-1',
 	table: 'YOUR_TABLE_NAME',
 	schema: { partition: 'pk', sort: 'sk' },
-	indexes: [
-		{
-			name: 'ls-index',
-			partition: 'pk',
-			sort: 'lsiSk',
-			sortType: 'S'
-		},
-		{
-			name: 'gs-index',
-			partition: 'gsiPk',
-			partitionType: 'S',
-			sort: 'gsiSk',
-			sortType: 'S'
-		}
-	],
-	// Automatic metadata attribute generation
+	// Advanced metadata attribute configuration
 	metaAttributes: {
-		'pk-foo': ['pk', 'foo'] // Combines pk and foo
-	},
-	metaAttributesJoiner: '#', // Uses # as separator
-	onChange: async events => {
-		// Optional callback for tracking changes
-		console.log('Changes:', events);
+		// Simple format - uses default joiner '#'
+		'title-category': ['title', 'category'],
+
+		// Advanced format with custom joiner and transform
+		'searchable-tags': {
+			attributes: ['tags'],
+			joiner: '|',
+			transform: (attribute, value) => {
+				if (attribute === 'tags' && Array.isArray(value)) {
+					return value.join('|').toLowerCase();
+				}
+				return undefined;
+			}
+		}
 	}
 });
 ```
+
+The transform function allows you to:
+
+- Modify values before they're combined
+- Filter out values by returning undefined
+- Apply custom formatting or normalization
+- Handle different data types appropriately
 
 ### Table Operations
 

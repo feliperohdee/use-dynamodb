@@ -23,11 +23,19 @@ const createItems = (count: number) => {
 	});
 };
 
-const factory = () => {
+const factory = (metaAttributes?: Record<string, string[] | { attributes: string[]; joiner: string }>) => {
 	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
-		metaAttributes: {
-			'pk-bar': ['pk', 'bar']
+		metaAttributes: metaAttributes ?? {
+			'pk-bar': {
+				attributes: ['pk', 'bar'],
+				joiner: '#',
+				transform: (key, value) => {
+					if (key === 'bar') {
+						return _.snakeCase(value);
+					}
+				}
+			}
 		},
 		region: process.env.AWS_REGION || '',
 		schema: {
@@ -52,6 +60,15 @@ describe('/index.ts', () => {
 		db = factory();
 	});
 
+	describe('constructor', () => {
+		it('should set metaAttributes', () => {
+			const db = factory({ 'pk-bar': ['pk', 'bar'] });
+
+			expect(db.metaAttributes['pk-bar']).toEqual({ attributes: ['pk', 'bar'], joiner: '#' });
+			expect(db.metaAttributes['pk-bar'].joiner).toEqual('#');
+		});
+	});
+
 	describe('batchGet / batchWrite', () => {
 		afterEach(async () => {
 			await db.clear();
@@ -72,8 +89,8 @@ describe('/index.ts', () => {
 			});
 
 			expect(batchGetItems).toHaveLength(2);
-			expect(batchGetItems[0]['pk-bar']).toEqual('pk-0#bar-0');
-			expect(batchGetItems[1]['pk-bar']).toEqual('pk-1#bar-1');
+			expect(batchGetItems[0]['pk-bar']).toEqual('pk-0#bar_0');
+			expect(batchGetItems[1]['pk-bar']).toEqual('pk-1#bar_1');
 		});
 	});
 
@@ -89,7 +106,7 @@ describe('/index.ts', () => {
 			// @ts-expect-error
 			const metaAttributes = db.generateMetaAttributes(item);
 
-			expect(metaAttributes['pk-bar']).toEqual('pk-0#bar-0');
+			expect(metaAttributes['pk-bar']).toEqual('pk-0#bar_0');
 		});
 
 		it('should generate partial', () => {
@@ -118,7 +135,7 @@ describe('/index.ts', () => {
 				sk: 'sk-0'
 			});
 
-			expect(res['pk-bar']).toEqual('pk-0#bar-0');
+			expect(res['pk-bar']).toEqual('pk-0#bar_0');
 		});
 	});
 
@@ -145,7 +162,7 @@ describe('/index.ts', () => {
 				replaceItem
 			);
 
-			expect(res['pk-bar']).toEqual('pk-0#bar-1');
+			expect(res['pk-bar']).toEqual('pk-0#bar_1');
 		});
 	});
 
@@ -178,7 +195,7 @@ describe('/index.ts', () => {
 
 				// get / update
 				expect(db.client.send).toHaveBeenCalledTimes(2);
-				expect(res['pk-bar']).toEqual('pk-0#bar-0');
+				expect(res['pk-bar']).toEqual('pk-0#bar_0');
 			});
 
 			it('should not update meta if have settled all meta attributes', async () => {
@@ -218,7 +235,7 @@ describe('/index.ts', () => {
 					expect.objectContaining({
 						input: expect.objectContaining({
 							ExpressionAttributeNames: { '#pk_bar': 'pk-bar' },
-							ExpressionAttributeValues: { ':pk_bar': 'pk-0#bar-1' },
+							ExpressionAttributeValues: { ':pk_bar': 'pk-0#bar_1' },
 							Key: { pk: 'pk-0', sk: 'sk-0' },
 							ReturnValues: 'ALL_NEW',
 							TableName: 'use-dynamodb-spec',
@@ -227,7 +244,7 @@ describe('/index.ts', () => {
 					})
 				);
 
-				expect(res['pk-bar']).toEqual('pk-0#bar-1');
+				expect(res['pk-bar']).toEqual('pk-0#bar_1');
 			});
 		});
 
@@ -275,7 +292,7 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(res['pk-bar']).toEqual('pk-0#bar-0');
+				expect(res['pk-bar']).toEqual('pk-0#bar_0');
 			});
 
 			it('should update meta', async () => {
@@ -317,7 +334,7 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(res['pk-bar']).toEqual('pk-0#bar-1');
+				expect(res['pk-bar']).toEqual('pk-0#bar_1');
 			});
 		});
 	});
