@@ -1084,7 +1084,7 @@ class Dynamodb<T extends Dict = Dict> {
 			// Generate and update metaFields after the update operation
 			if (_.size(this.metaFields) > 0) {
 				const attributeNamesInUpdateExpression = updateCommandInput.UpdateExpression.match(/#\w+/g);
-				const affectedFields = _.reduce(
+				const updatedFields = _.reduce(
 					attributeNamesInUpdateExpression,
 					(reduction, name) => {
 						const field = updateCommandInput.ExpressionAttributeNames?.[name];
@@ -1098,9 +1098,14 @@ class Dynamodb<T extends Dict = Dict> {
 					new Set<string>()
 				);
 
-				const affectedMetaFields = _.some(this.metaFields, fields => {
+				const affectedMetaFields = _.some(this.metaFields, (fields, key) => {
+					// if updatedFields has the key, it means the field is already updated
+					if (updatedFields.has(key)) {
+						return false;
+					}
+
 					return _.some(fields, field => {
-						return affectedFields.has(field);
+						return updatedFields.has(field);
 					});
 				});
 

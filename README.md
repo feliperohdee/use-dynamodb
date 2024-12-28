@@ -87,7 +87,7 @@ const db = new Dynamodb<Item>({
 	],
 	// Automatic metadata field generation
 	metaFields: {
-		'pk-foo': ['pk', 'foo'], // Combines pk and foo
+		'pk-foo': ['pk', 'foo'] // Combines pk and foo
 	},
 	metaFieldsJoiner: '#', // Uses # as separator
 	onChange: async events => {

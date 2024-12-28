@@ -171,7 +171,7 @@ describe('/index.ts', () => {
 					attributeNames: { '#foo': 'foo' },
 					attributeValues: { ':foo': 'foo-1' },
 					filter: {
-						item: { pk: 'pk-0' }
+						item: { pk: 'pk-0', sk: 'sk-0' }
 					},
 					updateExpression: 'SET #foo = :foo'
 				});
@@ -181,12 +181,33 @@ describe('/index.ts', () => {
 				expect(res['pk-bar']).toEqual('pk-0#bar-0');
 			});
 
+			it('should not update meta if have settled all meta fields', async () => {
+				const res = await db.update({
+					attributeNames: {
+						'#bar': 'bar',
+						'#pk_bar': 'pk-bar'
+					},
+					attributeValues: {
+						':bar': 'bar-1',
+						':pk_bar': 'pk-0#bar-1'
+					},
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-0' }
+					},
+					updateExpression: 'SET #bar = :bar, #pk_bar = :pk_bar'
+				});
+
+				// get / update
+				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(res['pk-bar']).toEqual('pk-0#bar-1');
+			});
+
 			it('should update meta', async () => {
 				const res = await db.update({
 					attributeNames: { '#bar': 'bar' },
 					attributeValues: { ':bar': 'bar-1' },
 					filter: {
-						item: { pk: 'pk-0' }
+						item: { pk: 'pk-0', sk: 'sk-0' }
 					},
 					updateExpression: 'SET #bar = :bar'
 				});
@@ -196,12 +217,8 @@ describe('/index.ts', () => {
 				expect(db.client.send).toHaveBeenCalledWith(
 					expect.objectContaining({
 						input: expect.objectContaining({
-							ExpressionAttributeNames: {
-								'#pk_bar': 'pk-bar'
-							},
-							ExpressionAttributeValues: {
-								':pk_bar': 'pk-0#bar-1'
-							},
+							ExpressionAttributeNames: { '#pk_bar': 'pk-bar' },
+							ExpressionAttributeValues: { ':pk_bar': 'pk-0#bar-1' },
 							Key: { pk: 'pk-0', sk: 'sk-0' },
 							ReturnValues: 'ALL_NEW',
 							TableName: 'use-dynamodb-spec',
