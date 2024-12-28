@@ -94,7 +94,7 @@ namespace Dynamodb {
 	export type MetaAttributeOptions = {
 		attributes: string[];
 		joiner: string;
-		transform?: (attribute: string, value: any) => string | undefined;
+		transform?: (attribute: string, value: any) => string | void;
 	};
 
 	export type MultiResponse<T extends Dict = Dict> = {
@@ -474,7 +474,7 @@ class Dynamodb<T extends Dict = Dict> {
 					let value = item[attribute];
 
 					if (_.isFunction(transform)) {
-						value = _.trim(transform(attribute, value)) || value;
+						value = _.trim(transform(attribute, value) ?? '') || value;
 					}
 
 					return _.toString(value);

@@ -101,7 +101,7 @@ const db = new Dynamodb<Item>({
 				if (attribute === 'tags' && Array.isArray(value)) {
 					return value.join('|').toLowerCase();
 				}
-				return undefined;
+				return;
 			}
 		}
 	}
