@@ -15,6 +15,7 @@ import {
 	TransactWriteCommand,
 	TransactWriteCommandInput,
 	TransactWriteCommandOutput,
+	TranslateConfig,
 	UpdateCommand,
 	UpdateCommandInput
 } from '@aws-sdk/lib-dynamodb';
@@ -61,6 +62,7 @@ namespace Dynamodb {
 		schema: Dynamodb.TableSchema;
 		secretAccessKey: string;
 		table: string;
+		translateConfig?: TranslateConfig;
 	};
 
 	export type DeleteOptions = {
@@ -211,7 +213,8 @@ class Dynamodb<T extends Dict = Dict> {
 							return 100 + attempt * 1000;
 						})
 				)
-			})
+			}),
+			options.translateConfig
 		);
 
 		this.indexes = options.indexes || [];
