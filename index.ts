@@ -184,7 +184,7 @@ namespace Dynamodb {
 		consistencyCheck?: boolean;
 		filter: Omit<Dynamodb.FilterOptions, 'limit' | 'onChunk' | 'startKey'>;
 		updateExpression?: string;
-		updateFunction?: (item: Dynamodb.PersistedItem<R> | Dict, exists: boolean) => Dict;
+		updateFunction?: (item: Dynamodb.PersistedItem<R> | Dict, exists: boolean) => Dict | Promise<Dict>;
 		upsert?: boolean;
 	};
 }
@@ -1180,7 +1180,7 @@ class Dynamodb<T extends Dict = Dict> {
 		// end of updateExpression
 
 		const updatedItem = options.updateFunction
-			? options.updateFunction(currentItem || referenceKey, Boolean(currentItem))
+			? await options.updateFunction(currentItem || referenceKey, Boolean(currentItem))
 			: currentItem || referenceKey;
 
 		if (currentItem && options.allowUpdatePartitionAndSort) {
