@@ -99,9 +99,9 @@ namespace Dynamodb {
 		transform?: (attribute: string, value: any) => string | void;
 	};
 
-	export type MultiResponse<T extends Dict = Dict> = {
+	export type MultiResponse<T extends Dict = Dict, ReturnAsPersistedItem extends boolean = true> = {
 		count: number;
-		items: PersistedItem<T>[];
+		items: ReturnAsPersistedItem extends true ? PersistedItem<T>[] : T[];
 		lastEvaluatedKey: Dict | null;
 	};
 
