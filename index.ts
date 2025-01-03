@@ -194,9 +194,9 @@ class Dynamodb<T extends Dict = Dict> {
 	public indexes: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
 	public metaAttributes: Record<string, Dynamodb.MetaAttributeOptions>;
 	public schema: Dynamodb.TableSchema;
+	public table: string;
 
 	private onChange: Dynamodb.OnChange<T> | null;
-	private table: string;
 
 	constructor(options: Dynamodb.ConstructorOptions<T>) {
 		this.client = DynamoDBDocumentClient.from(
