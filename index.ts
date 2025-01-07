@@ -1027,23 +1027,20 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	async update<R extends Dict = T>(options: Dynamodb.UpdateOptions<R>, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
-		const currentItem = await this.get({
-			...options.filter,
-			consistentRead: true
-		});
-
-		if (!currentItem && !options.upsert) {
-			throw new Error('Item not found');
-		}
-
-		if (!currentItem && !options.filter.item) {
-			throw new Error('Existing item or filter.item must be provided');
-		}
-
-		const referenceKey = this.getSchemaKeys(currentItem || options.filter.item!);
-
 		// start of updateExpression
 		if (options.updateExpression) {
+			const referenceItem =
+				options.filter.item ||
+				(await this.get({
+					...options.filter,
+					consistentRead: true
+				}));
+
+			if (!referenceItem) {
+				throw new Error('Existing item or filter.item must be provided');
+			}
+
+			const referenceKey = this.getSchemaKeys(referenceItem);
 			const nowISO = new Date(ts).toISOString();
 			const updateCommandInput: UpdateCommandInput = options.upsert
 				? {
@@ -1183,6 +1180,20 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 		// end of updateExpression
 
+		const currentItem = await this.get({
+			...options.filter,
+			consistentRead: true
+		});
+
+		if (!currentItem && !options.upsert) {
+			throw new Error('Item not found');
+		}
+
+		if (!currentItem && !options.filter.item) {
+			throw new Error('Existing item or filter.item must be provided');
+		}
+
+		const referenceKey = this.getSchemaKeys(currentItem || options.filter.item!);
 		const updatedItem = options.updateFunction
 			? await options.updateFunction(currentItem || referenceKey, Boolean(currentItem))
 			: currentItem || referenceKey;
@@ -1270,7 +1281,9 @@ class Dynamodb<T extends Dict = Dict> {
 					const projection: {
 						ProjectionType: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
 						NonKeyAttributes?: string[];
-					} = { ProjectionType: 'ALL' };
+					} = {
+						ProjectionType: index.projection?.type || 'ALL'
+					};
 
 					if (index.projection?.type === 'INCLUDE') {
 						projection.NonKeyAttributes = index.projection.nonKeyAttributes;
@@ -1317,7 +1330,9 @@ class Dynamodb<T extends Dict = Dict> {
 					const projection: {
 						ProjectionType: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
 						NonKeyAttributes?: string[];
-					} = { ProjectionType: 'ALL' };
+					} = {
+						ProjectionType: index.projection?.type || 'ALL'
+					};
 
 					if (index.projection?.type === 'INCLUDE') {
 						projection.NonKeyAttributes = index.projection.nonKeyAttributes;

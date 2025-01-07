@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Db from './index';
 
@@ -193,8 +193,7 @@ describe('/index.ts', () => {
 					updateExpression: 'SET #foo = :foo'
 				});
 
-				// get / update
-				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(db.client.send).toHaveBeenCalledOnce();
 				expect(res['pk-bar']).toEqual('pk-0#bar_0');
 			});
 
@@ -214,8 +213,7 @@ describe('/index.ts', () => {
 					updateExpression: 'SET #bar = :bar, #pk_bar = :pk_bar'
 				});
 
-				// get / update
-				expect(db.client.send).toHaveBeenCalledTimes(2);
+				expect(db.client.send).toHaveBeenCalledOnce();
 				expect(res['pk-bar']).toEqual('pk-0#bar-1');
 			});
 
@@ -229,8 +227,7 @@ describe('/index.ts', () => {
 					updateExpression: 'SET #bar = :bar'
 				});
 
-				// get / update
-				expect(db.client.send).toHaveBeenCalledTimes(3);
+				expect(db.client.send).toHaveBeenCalledTimes(2);
 				expect(db.client.send).toHaveBeenCalledWith(
 					expect.objectContaining({
 						input: expect.objectContaining({

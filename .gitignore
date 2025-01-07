@@ -1,5 +1,5 @@
-.npmrc
 .DS_Store
+.npmrc
 .test.sh
 .vscode
 coverage
