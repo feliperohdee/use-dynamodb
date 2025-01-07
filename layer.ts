@@ -126,7 +126,7 @@ class Layer<T extends Dict = Dict> {
 			throw new Error('Dynamodb schema sort key must be sk');
 		}
 
-		const cursorGSI = _.find(this.db.indexes, (index: Dynamodb.TableGSI) => {
+		const cursorGSI = _.find(this.db.indexes, (index: Dynamodb.TableIndex) => {
 			return index.partition === 'cursor' && index.partitionType === 'N' && index.sort === 'pk' && index.sortType === 'S';
 		});
 

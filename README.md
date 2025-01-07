@@ -9,7 +9,11 @@ A TypeScript library that provides a simplified interface for interacting with A
 ## 🚀 Features
 
 - ✅ Type-safe CRUD operations (Create, Read, Update, Delete)
-- 🔍 Support for local and global secondary indexes (LSI & GSI)
+- 🔍 Flexible secondary index configuration:
+  - Automatic LSI/GSI determination based on partition key
+  - Optional forcing of GSI with forceGlobal flag
+  - Customizable attribute projections
+  - Support for both string and number key types
 - 📦 Batch operations with automatic chunking
 - 🔎 Query and Scan operations with filtering
 - 🔄 Optimistic locking with versioning
@@ -87,7 +91,25 @@ const db = new Dynamodb<Item>({
 	secretAccessKey: 'YOUR_SECRET_KEY',
 	region: 'us-east-1',
 	table: 'YOUR_TABLE_NAME',
-	schema: { partition: 'pk', sort: 'sk' },
+	schema: {
+		partition: 'pk',
+		sort: 'sk',
+		sortType: 'S' // Optional, defaults to 'S'
+	},
+	indexes: [
+		{
+			name: 'status-index',
+			partition: 'status',
+			partitionType: 'S',
+			sort: 'createdAt',
+			sortType: 'S',
+			forceGlobal: true, // Forces the index to be GSI even if it shares partition key
+			projection: {
+				type: 'INCLUDE',
+				nonKeyAttributes: ['title', 'description']
+			}
+		}
+	],
 	// Advanced metadata attribute configuration
 	metaAttributes: {
 		// Simple format - uses default joiner '#'
@@ -119,7 +141,9 @@ const db = new Dynamodb<Item>({
 		{
 			name: 'status-index',
 			partition: 'status',
+			partitionType: 'S',
 			sort: 'createdAt',
+			sortType: 'S',
 			projection: {
 				type: 'INCLUDE', // Can be 'ALL', 'KEYS_ONLY', or 'INCLUDE'
 				nonKeyAttributes: ['title', 'description'] // Required when type is 'INCLUDE'
@@ -128,6 +152,7 @@ const db = new Dynamodb<Item>({
 		{
 			name: 'category-index',
 			partition: 'category',
+			partitionType: 'S',
 			projection: {
 				type: 'ALL' // Project all attributes
 			}
@@ -135,6 +160,7 @@ const db = new Dynamodb<Item>({
 		{
 			name: 'date-index',
 			partition: 'date',
+			partitionType: 'S',
 			projection: {
 				type: 'KEYS_ONLY' // Only project key attributes
 			}
@@ -420,21 +446,22 @@ const results = await db.filter({
 type TableSchema = {
 	partition: string;
 	sort?: string;
+	sortType?: 'S' | 'N';
 };
 
-type TableGSI = {
+type TableIndex = {
+	forceGlobal?: boolean;
 	name: string;
 	partition: string;
 	partitionType: 'S' | 'N';
+	projection?: IndexProjection;
 	sort?: string;
 	sortType?: 'S' | 'N';
 };
 
-type TableLSI = {
-	name: string;
-	partition: string;
-	sort?: string;
-	sortType: 'S' | 'N';
+type IndexProjection = {
+	type: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
+	nonKeyAttributes?: string[]; // Required when type is 'INCLUDE'
 };
 ```
 
@@ -485,6 +512,7 @@ yarn test
 - The library provides built-in retry strategy with exponential backoff
 - All timestamps are managed automatically (**createdAt, **updatedAt, \_\_ts)
 - Queries automatically handle pagination for large result sets
+- Indexes are automatically determined as LSI or GSI based on their partition key, with ability to force GSI using forceGlobal flag
 
 ## 📝 License
 

@@ -53,7 +53,7 @@ namespace Dynamodb {
 
 	export type ConstructorOptions<T extends Dict = Dict> = {
 		accessKeyId: string;
-		indexes?: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
+		indexes?: Dynamodb.TableIndex[];
 		metaAttributes?: Record<string, string[] | MetaAttributeOptions>;
 		onChange?: Dynamodb.OnChange<T>;
 		region: string;
@@ -93,10 +93,6 @@ namespace Dynamodb {
 
 	export type GetOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	export type GetLastOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
-	export type IndexProjection = {
-		nonKeyAttributes?: string[];
-		type: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
-	};
 
 	export type MetaAttributeOptions = {
 		attributes: string[];
@@ -166,21 +162,19 @@ namespace Dynamodb {
 		sortType?: 'S' | 'N';
 	};
 
-	export type TableGSI = {
+	export type TableIndex = {
+		forceGlobal?: boolean;
 		name: string;
 		partition: string;
 		partitionType: 'S' | 'N';
-		projection?: IndexProjection;
+		projection?: TableIndexProjection;
 		sort?: string;
 		sortType?: 'S' | 'N';
 	};
 
-	export type TableLSI = {
-		name: string;
-		partition: string;
-		projection?: IndexProjection;
-		sort?: string;
-		sortType?: 'S' | 'N';
+	export type TableIndexProjection = {
+		nonKeyAttributes?: string[];
+		type: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
 	};
 
 	export type UpdateOptions<R extends Dict = Dict> = {
@@ -198,7 +192,7 @@ namespace Dynamodb {
 
 class Dynamodb<T extends Dict = Dict> {
 	public client: DynamoDBDocumentClient;
-	public indexes: (Dynamodb.TableGSI | Dynamodb.TableLSI)[];
+	public indexes: Dynamodb.TableIndex[];
 	public metaAttributes: Record<string, Dynamodb.MetaAttributeOptions>;
 	public schema: Dynamodb.TableSchema;
 	public table: string;
@@ -1269,8 +1263,8 @@ class Dynamodb<T extends Dict = Dict> {
 
 			if (inexistentTable) {
 				const gsi = _.filter(this.indexes, index => {
-					return index.partition !== this.schema.partition;
-				}) as Dynamodb.TableGSI[];
+					return index.forceGlobal || index.partition !== this.schema.partition;
+				});
 
 				const globalIndexes = _.map(gsi, index => {
 					const projection: {
@@ -1316,8 +1310,8 @@ class Dynamodb<T extends Dict = Dict> {
 				}) as AttributeDefinition[];
 
 				const lsi = _.filter(this.indexes, index => {
-					return index.partition === this.schema.partition;
-				}) as Dynamodb.TableLSI[];
+					return !index.forceGlobal && index.partition === this.schema.partition;
+				});
 
 				const localIndexes = _.map(lsi, index => {
 					const projection: {
