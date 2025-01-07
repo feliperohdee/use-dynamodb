@@ -1,0 +1,7 @@
+.npmrc
+.DS_Store
+.test.sh
+.vscode
+coverage
+dist
+node_modules
