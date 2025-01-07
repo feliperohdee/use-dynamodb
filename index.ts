@@ -166,7 +166,7 @@ namespace Dynamodb {
 		forceGlobal?: boolean;
 		name: string;
 		partition: string;
-		partitionType: 'S' | 'N';
+		partitionType?: 'S' | 'N';
 		projection?: TableIndexProjection;
 		sort?: string;
 		sortType?: 'S' | 'N';
