@@ -215,7 +215,11 @@ class Dynamodb<T extends Dict = Dict> {
 						})
 				)
 			}),
-			options.translateConfig
+			options.translateConfig ?? {
+				marshallOptions: {
+					removeUndefinedValues: true
+				}
+			}
 		);
 
 		this.indexes = options.indexes || [];
