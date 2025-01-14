@@ -603,7 +603,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const persistedItem = {
 			...metaAttributesValues,
 			...item,
-			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt || nowISO) : nowISO,
+			__createdAt: options.useCurrentCreatedAtIfExists ? item.__createdAt || nowISO : nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
@@ -815,7 +815,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const newItem = {
 			...metaAttributesValues,
 			...item,
-			__createdAt: options.useCurrentCreatedAtIfExists ? (item.__createdAt || replacedItem.__createdAt) : replacedItem.__createdAt,
+			__createdAt: options.useCurrentCreatedAtIfExists ? item.__createdAt || replacedItem.__createdAt : replacedItem.__createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
