@@ -469,6 +469,7 @@ describe('/index.ts', () => {
 
 		beforeEach(() => {
 			vi.spyOn(db, 'filter');
+			vi.spyOn(db.client, 'send');
 		});
 
 		it('should return null if not found', async () => {
@@ -484,12 +485,17 @@ describe('/index.ts', () => {
 				item: { pk: 'pk-0', sk: 'sk-0' }
 			});
 
-			expect(db.filter).toHaveBeenCalledWith({
-				item: { pk: 'pk-0', sk: 'sk-0' },
-				limit: 1,
-				onChunk: expect.any(Function),
-				startKey: null
-			});
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: {
+						Key: {
+							pk: 'pk-0',
+							sk: 'sk-0'
+						},
+						TableName: 'use-dynamodb-spec'
+					}
+				})
+			);
 
 			expect(item).toEqual(
 				expect.objectContaining({
@@ -537,13 +543,22 @@ describe('/index.ts', () => {
 				select: ['foo', 'gsiPk']
 			});
 
-			expect(db.filter).toHaveBeenCalledWith({
-				item: { pk: 'pk-0', sk: 'sk-0' },
-				limit: 1,
-				onChunk: expect.any(Function),
-				select: ['foo', 'gsiPk'],
-				startKey: null
-			});
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: {
+						ExpressionAttributeNames: {
+							'#__pe1': 'foo',
+							'#__pe2': 'gsiPk'
+						},
+						Key: {
+							pk: 'pk-0',
+							sk: 'sk-0'
+						},
+						ProjectionExpression: '#__pe1, #__pe2',
+						TableName: 'use-dynamodb-spec'
+					}
+				})
+			);
 
 			expect(item).toEqual(
 				expect.objectContaining({

@@ -6,6 +6,8 @@ import {
 	DeleteCommand,
 	DeleteCommandInput,
 	DynamoDBDocumentClient,
+	GetCommand,
+	GetCommandInput,
 	PutCommand,
 	PutCommandInput,
 	QueryCommand,
@@ -496,6 +498,48 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	async get<R extends Dict = T>(options: Dynamodb.GetOptions): Promise<Dynamodb.PersistedItem<R> | null> {
+		if (
+			options.item &&
+			!options.filterExpression &&
+			!options.index &&
+			!options.prefix &&
+			!options.scanIndexForward &&
+			!options.queryExpression
+		) {
+			if (
+				(this.schema.partition && this.schema.sort && options.item[this.schema.partition] && options.item[this.schema.sort]) ||
+				(this.schema.partition && !this.schema.sort && options.item[this.schema.partition])
+			) {
+				const getCommandInput: GetCommandInput = {
+					Key: this.getSchemaKeys(options.item),
+					TableName: this.table
+				};
+
+				if (_.size(options.select) > 0) {
+					getCommandInput.ExpressionAttributeNames = {
+						...getCommandInput.ExpressionAttributeNames,
+						..._.reduce(
+							options.select,
+							(reduction, attr, index) => {
+								reduction[`#__pe${index + 1}`] = attr;
+
+								return reduction;
+							},
+							{} as Record<string, string>
+						)
+					};
+
+					getCommandInput.ProjectionExpression = _.map(options.select, (attr, index) => {
+						return `#__pe${index + 1}`;
+					}).join(', ');
+				}
+
+				const res = await this.client.send(new GetCommand(getCommandInput));
+
+				return (res.Item || null) as Dynamodb.PersistedItem<R> | null;
+			}
+		}
+
 		const { items } = await this.filter<R>({
 			...options,
 			onChunk: () => {},
