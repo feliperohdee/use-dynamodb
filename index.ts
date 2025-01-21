@@ -33,7 +33,7 @@ import {
 	LocalSecondaryIndex
 } from '@aws-sdk/client-dynamodb';
 
-import { concatConditionExpression, concatUpdateExpression } from './expressions-helper.js';
+import { concatConditionExpression, concatUpdateExpression } from './expressions-helper';
 
 type Dict = Record<string, any>;
 

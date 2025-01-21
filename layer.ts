@@ -2,8 +2,8 @@ import _ from 'lodash';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { promiseAll } from 'use-async-helpers';
 
-import type Dynamodb from './index.js';
-import type { Dict } from './index.js';
+import type Dynamodb from './index';
+import type { Dict } from './index';
 
 namespace Layer {
 	export type Meta = {
