@@ -67,6 +67,12 @@ namespace Dynamodb {
 		translateConfig?: TranslateConfig;
 	};
 
+	export type BatchGetOptions = {
+		consistentRead?: boolean;
+		returnNullIfNotFound?: boolean;
+		select?: string[];
+	};
+
 	export type DeleteOptions = {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
@@ -275,7 +281,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async batchGet<R extends Dict = T>(
 		keys: Dict[],
-		options: { returnNullIfNotFound?: boolean } = {}
+		options?: Dynamodb.BatchGetOptions
 	): Promise<(Dynamodb.PersistedItem<R> | null)[] | Dynamodb.PersistedItem<R>[]> {
 		keys = _.map(keys, item => {
 			return this.getSchemaKeys(item);
@@ -283,14 +289,51 @@ class Dynamodb<T extends Dict = Dict> {
 
 		let chunks = _.chunk(keys, 100);
 		let items: (Dynamodb.PersistedItem<R> | null)[] = [];
+		let opts: {
+			attributeNames: Record<string, string>;
+			consistentRead: boolean;
+			projectionExpression: string;
+		} = {
+			attributeNames: {},
+			consistentRead: options?.consistentRead ?? false,
+			projectionExpression: ''
+		};
+
+		if (options?.select && _.size(options.select) > 0) {
+			opts.attributeNames = {
+				...opts.attributeNames,
+				..._.reduce(
+					options.select,
+					(reduction, attr, index) => {
+						reduction[`#__pe${index + 1}`] = attr;
+
+						return reduction;
+					},
+					{} as Record<string, string>
+				)
+			};
+
+			opts.projectionExpression = _.map(options.select, (attr, index) => {
+				return `#__pe${index + 1}`;
+			}).join(', ');
+		}
 
 		for (const chunk of chunks) {
 			const res = await this.client.send(
 				new BatchGetCommand({
 					RequestItems: {
-						[this.table]: {
-							Keys: chunk
-						}
+						[this.table]:
+							opts.projectionExpression && _.size(opts.attributeNames) > 0
+								? {
+										ConsistentRead: opts.consistentRead,
+										ExpressionAttributeNames: opts.attributeNames,
+										Keys: chunk,
+										ProjectionExpression: opts.projectionExpression
+									}
+								: {
+										ConsistentRead: opts.consistentRead,
+										Keys: chunk
+									}
 					}
 				})
 			);
@@ -298,7 +341,7 @@ class Dynamodb<T extends Dict = Dict> {
 			if (res.Responses) {
 				const responseItems = res.Responses[this.table] as Dynamodb.PersistedItem<R>[];
 
-				if (options.returnNullIfNotFound) {
+				if (options?.returnNullIfNotFound) {
 					items = new Array(keys.length).fill(null);
 
 					// Match returned items with their corresponding positions in the input keys array
