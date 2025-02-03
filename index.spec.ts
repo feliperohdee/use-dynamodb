@@ -97,8 +97,13 @@ describe('/index.ts', () => {
 				})
 			).toBeTruthy();
 
-			const batchGetItems = await db.batchGet(batchWriteItems);
+			const batchGetItems = await db.batchGet([...batchWriteItems, { pk: 'pk-inexistent', sk: 'sk-inexistent' }]);
 			expect(batchGetItems).toHaveLength(52);
+
+			const batchGetItemsWithNull = await db.batchGet([...batchWriteItems, { pk: 'pk-inexistent', sk: 'sk-inexistent' }], {
+				returnNullIfNotFound: true
+			});
+			expect(batchGetItemsWithNull).toHaveLength(53);
 
 			const batchDeleteItems = await Promise.all([
 				db.batchDelete(

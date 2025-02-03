@@ -273,13 +273,16 @@ class Dynamodb<T extends Dict = Dict> {
 		return keys;
 	}
 
-	async batchGet<R extends Dict = T>(keys: Dict[]): Promise<Dynamodb.PersistedItem<R>[]> {
+	async batchGet<R extends Dict = T>(
+		keys: Dict[],
+		options: { returnNullIfNotFound?: boolean } = {}
+	): Promise<(Dynamodb.PersistedItem<R> | null)[] | Dynamodb.PersistedItem<R>[]> {
 		keys = _.map(keys, item => {
 			return this.getSchemaKeys(item);
 		});
 
 		let chunks = _.chunk(keys, 100);
-		let items: Dynamodb.PersistedItem<R>[] = [];
+		let items: (Dynamodb.PersistedItem<R> | null)[] = [];
 
 		for (const chunk of chunks) {
 			const res = await this.client.send(
@@ -293,7 +296,25 @@ class Dynamodb<T extends Dict = Dict> {
 			);
 
 			if (res.Responses) {
-				items = [...items, ...(res.Responses[this.table] as Dynamodb.PersistedItem<R>[])];
+				const responseItems = res.Responses[this.table] as Dynamodb.PersistedItem<R>[];
+
+				if (options.returnNullIfNotFound) {
+					items = new Array(keys.length).fill(null);
+
+					// Match returned items with their corresponding positions in the input keys array
+					for (const item of responseItems) {
+						const keyMatch = this.getSchemaKeys(item);
+						const keyIndex = _.findIndex(keys, k => {
+							return _.isEqual(k, keyMatch);
+						});
+
+						if (keyIndex !== -1) {
+							items[keyIndex] = item;
+						}
+					}
+				} else {
+					items = [...items, ...(res.Responses[this.table] as Dynamodb.PersistedItem<R>[])];
+				}
 			}
 		}
 

@@ -85,12 +85,16 @@ describe('/index.ts', () => {
 			const batchGetItems = await db.batchGet(batchWriteItems);
 
 			batchGetItems.sort((a, b) => {
-				return a.sk.localeCompare(b.sk);
+				if (a && b) {
+					return a.sk.localeCompare(b.sk);
+				}
+
+				return 0;
 			});
 
 			expect(batchGetItems).toHaveLength(2);
-			expect(batchGetItems[0]['pk-bar']).toEqual('pk-0#bar_0');
-			expect(batchGetItems[1]['pk-bar']).toEqual('pk-1#bar_1');
+			expect(batchGetItems[0]!['pk-bar']).toEqual('pk-0#bar_0');
+			expect(batchGetItems[1]!['pk-bar']).toEqual('pk-1#bar_1');
 		});
 	});
 
