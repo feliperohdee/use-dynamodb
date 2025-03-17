@@ -519,14 +519,10 @@ class Dynamodb<T extends Dict = Dict> {
 			throw new Error('Must provide either item, queryExpression or filterExpression');
 		}
 
-		if (options.item) {
+		if (options.item || options.queryExpression) {
 			res = await this.query<R>({
 				...options,
-				item: options.item
-			});
-		} else if (options.queryExpression) {
-			res = await this.query<R>({
-				...options,
+				item: options.item,
 				queryExpression: options.queryExpression
 			});
 		} else if (options.filterExpression) {
