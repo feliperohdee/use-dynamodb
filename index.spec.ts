@@ -2064,6 +2064,24 @@ describe('/index.ts', () => {
 			expect(count).toEqual(10);
 			expect(_.keys(items[0])).toEqual(expect.arrayContaining(['foo', 'gsiPk']));
 		});
+
+		it('should scan with segment and totalSegments', async () => {
+			const { count } = await db.scan({
+				segment: 1,
+				totalSegments: 2
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						Segment: 1,
+						TotalSegments: 2
+					})
+				})
+			);
+
+			expect(count).toEqual(0);
+		});
 	});
 
 	describe('update', () => {

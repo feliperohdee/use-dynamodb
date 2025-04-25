@@ -159,9 +159,11 @@ namespace Dynamodb {
 		index?: string;
 		limit?: number;
 		onChunk?: ({ count, items }: { count: number; items: Dynamodb.PersistedItem<R>[] }) => Promise<void> | void;
+		segment?: number;
 		select?: string[];
 		startKey?: Dict | null;
 		strictChunkLimit?: boolean;
+		totalSegments?: number;
 	};
 
 	export type TableSchema = {
@@ -1040,6 +1042,10 @@ class Dynamodb<T extends Dict = Dict> {
 			scanCommandInput.IndexName = options.index;
 		}
 
+		if (_.isNumber(options.segment)) {
+			scanCommandInput.Segment = options.segment;
+		}
+
 		if (_.size(options.select) > 0) {
 			scanCommandInput.ExpressionAttributeNames = {
 				...scanCommandInput.ExpressionAttributeNames,
@@ -1061,6 +1067,10 @@ class Dynamodb<T extends Dict = Dict> {
 
 		if (options.startKey) {
 			scanCommandInput.ExclusiveStartKey = options.startKey;
+		}
+
+		if (options.totalSegments) {
+			scanCommandInput.TotalSegments = options.totalSegments;
 		}
 
 		let res = await this.client.send(new ScanCommand(scanCommandInput));
