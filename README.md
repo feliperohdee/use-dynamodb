@@ -24,11 +24,6 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🔄 Custom retry strategy with exponential backoff
 - 🔗 Advanced metadata attribute generation with custom transformations
 
-## 📚 Documentation
-
-- [Main Documentation](README.md) - Core DynamoDB wrapper functionality
-- [Layer Module Documentation](README_LAYERS.md) - Event sourcing and caching capabilities
-
 ## 📦 Installation
 
 ```bash
