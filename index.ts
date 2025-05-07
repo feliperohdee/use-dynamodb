@@ -217,7 +217,7 @@ class Dynamodb<T extends Dict = Dict> {
 				},
 				maxAttempts: options.maxAttempts ?? 4,
 				region: options.region,
-				retryMode: 'standard'
+				retryMode: options.retryMode ?? 'standard'
 			}),
 			options.translateConfig ?? {
 				marshallOptions: {
