@@ -1,5 +1,4 @@
 import _ from 'lodash';
-import { ConfiguredRetryStrategy } from '@smithy/util-retry';
 import {
 	BatchGetCommand,
 	BatchWriteCommand,
@@ -56,11 +55,11 @@ namespace Dynamodb {
 	export type ConstructorOptions<T extends Dict = Dict> = {
 		accessKeyId: string;
 		indexes?: Dynamodb.TableIndex[];
+		maxAttempts?: number;
 		metaAttributes?: Record<string, string[] | MetaAttributeOptions>;
 		onChange?: Dynamodb.OnChange<T>;
 		region: string;
-		retryTimes?: number;
-		retryStrategy?: (attempt: number) => number;
+		retryMode?: 'standard' | 'adaptive';
 		schema: Dynamodb.TableSchema;
 		secretAccessKey: string;
 		table: string;
@@ -216,14 +215,9 @@ class Dynamodb<T extends Dict = Dict> {
 					accessKeyId: options.accessKeyId,
 					secretAccessKey: options.secretAccessKey
 				},
+				maxAttempts: options.maxAttempts ?? 4,
 				region: options.region,
-				retryStrategy: new ConfiguredRetryStrategy(
-					options.retryTimes ?? 4,
-					options.retryStrategy ??
-						((attempt: number) => {
-							return 100 + attempt * 1000;
-						})
-				)
+				retryMode: 'standard'
 			}),
 			options.translateConfig ?? {
 				marshallOptions: {

@@ -21,7 +21,7 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🕒 Built-in timestamp management (**createdAt, **updatedAt, \_\_ts)
 - 🔒 Conditional updates and transactions
 - 🎯 Change tracking with callbacks
-- 🔄 Custom retry strategy with exponential backoff
+- 🔄 Configurable retry strategy
 - 🔗 Advanced metadata attribute generation with custom transformations
 
 ## 📦 Installation
@@ -504,7 +504,6 @@ yarn test
 - The library automatically handles optimistic locking using the `__ts` attribute
 - All write operations (put, update, delete) trigger change events if an onChange handler is provided
 - Batch operations automatically handle chunking according to DynamoDB limits
-- The library provides built-in retry strategy with exponential backoff
 - All timestamps are managed automatically (**createdAt, **updatedAt, \_\_ts)
 - Queries automatically handle pagination for large result sets
 - Indexes are automatically determined as LSI or GSI based on their partition key, with ability to force GSI using forceGlobal flag
