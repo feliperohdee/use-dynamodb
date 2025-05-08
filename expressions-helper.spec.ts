@@ -1,4 +1,3 @@
-import _ from 'lodash';
 import { describe, expect, it } from 'vitest';
 
 import { concatConditionExpression, concatUpdateExpression } from './expressions-helper';

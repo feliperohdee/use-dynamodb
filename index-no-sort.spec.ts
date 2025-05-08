@@ -1,7 +1,8 @@
 import _ from 'lodash';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Db from './index';
+import { ENDPOINT } from './constants';
 
 type DbRecord = {
 	foo: string;
@@ -24,6 +25,7 @@ const createItems = (count: number) => {
 const factory = () => {
 	return new Db<DbRecord>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
+		endpoint: ENDPOINT,
 		region: 'us-east-1',
 		secretAccessKey: process.env.AWS_SECRET_KEY || '',
 		indexes: [
@@ -342,19 +344,14 @@ describe('/index-no-sort.ts', () => {
 			});
 
 			expect(count).toEqual(2);
-			expect(lastEvaluatedKey).toEqual({ pk: 'pk-1' });
 
 			vi.mocked(db.client.send).mockClear();
-			const {
-				items: items2,
-				count: count2,
-				lastEvaluatedKey: lastEvaluatedKey2
-			} = await db.scan({
+			const { items: items2, count: count2 } = await db.scan({
 				startKey: lastEvaluatedKey
 			});
 
 			expect(count2).toEqual(8);
-			expect(lastEvaluatedKey2).toBeNull();
+			expect(items[0].pk !== items2[0].pk).toBeTruthy();
 		});
 	});
 

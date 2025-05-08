@@ -1,8 +1,8 @@
 import _ from 'lodash';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Db from './index';
-
+import { ENDPOINT } from './constants';
 type Item = {
 	foo: string;
 	gsiPk: string;
@@ -26,6 +26,7 @@ const createItems = (count: number) => {
 const factory = (metaAttributes?: Record<string, string[] | { attributes: string[]; joiner: string }>) => {
 	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
+		endpoint: ENDPOINT,
 		metaAttributes: metaAttributes ?? {
 			'pk-bar': {
 				attributes: ['pk', 'bar'],

@@ -2,6 +2,7 @@ import _ from 'lodash';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
 import Db from './index';
+import { ENDPOINT } from './constants';
 
 type Item = {
 	foo: string;
@@ -28,6 +29,7 @@ const createItems = (count: number) => {
 const factory = ({ onChange }: { onChange: Mock }) => {
 	return new Db<Item>({
 		accessKeyId: process.env.AWS_ACCESS_KEY || '',
+		endpoint: ENDPOINT,
 		indexes: [
 			{
 				name: 'ls-index',
@@ -1993,7 +1995,7 @@ describe('/index.ts', () => {
 
 		it('should scan until limit with onChunk', async () => {
 			const onChunk = vi.fn();
-			const { items, count, lastEvaluatedKey } = await db.scan({
+			const { count, lastEvaluatedKey } = await db.scan({
 				chunkLimit: 1,
 				limit: 2,
 				onChunk

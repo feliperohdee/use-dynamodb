@@ -55,6 +55,7 @@ namespace Dynamodb {
 	export type ConstructorOptions<T extends Dict = Dict> = {
 		accessKeyId: string;
 		indexes?: Dynamodb.TableIndex[];
+		endpoint?: string;
 		maxAttempts?: number;
 		metaAttributes?: Record<string, string[] | MetaAttributeOptions>;
 		onChange?: Dynamodb.OnChange<T>;
@@ -215,6 +216,7 @@ class Dynamodb<T extends Dict = Dict> {
 					accessKeyId: options.accessKeyId,
 					secretAccessKey: options.secretAccessKey
 				},
+				endpoint: options.endpoint,
 				maxAttempts: options.maxAttempts ?? 4,
 				region: options.region,
 				retryMode: options.retryMode ?? 'standard'
@@ -227,7 +229,7 @@ class Dynamodb<T extends Dict = Dict> {
 		);
 
 		this.indexes = options.indexes || [];
-		this.metaAttributes = _.mapValues(options.metaAttributes || {}, (value, key) => {
+		this.metaAttributes = _.mapValues(options.metaAttributes || {}, value => {
 			return _.isArray(value) ? { attributes: value, joiner: '#' } : value;
 		});
 		this.onChange = null;
@@ -1382,7 +1384,8 @@ class Dynamodb<T extends Dict = Dict> {
 				})
 			);
 		} catch (err) {
-			const inexistentTable = (err as Error).message.includes('resource not found');
+			const inexistentTable =
+				_.includes((err as Error).message, 'resource not found') || _.includes((err as Error).message, 'non-existent table');
 
 			if (inexistentTable) {
 				const gsi = _.filter(this.indexes, index => {
