@@ -200,7 +200,48 @@ namespace Dynamodb {
 	};
 }
 
+const clientPool = new Map<string, DynamoDBDocumentClient>();
+const getClient = (options: {
+	accessKeyId: string;
+	secretAccessKey: string;
+	endpoint?: string;
+	maxAttempts?: number;
+	region: string;
+	retryMode?: 'standard' | 'adaptive';
+	translateConfig?: TranslateConfig;
+}) => {
+	const key = JSON.stringify(options);
+
+	if (clientPool.has(key)) {
+		return clientPool.get(key)!;
+	}
+
+	const client = DynamoDBDocumentClient.from(
+		new DynamoDBClient({
+			credentials: {
+				accessKeyId: options.accessKeyId,
+				secretAccessKey: options.secretAccessKey
+			},
+			endpoint: options.endpoint,
+			maxAttempts: options.maxAttempts ?? 4,
+			region: options.region,
+			retryMode: options.retryMode ?? 'standard'
+		}),
+		options.translateConfig ?? {
+			marshallOptions: {
+				removeUndefinedValues: true
+			}
+		}
+	);
+
+	clientPool.set(key, client);
+
+	return client;
+};
+
 class Dynamodb<T extends Dict = Dict> {
+	static getClient = getClient;
+
 	public client: DynamoDBDocumentClient;
 	public indexes: Dynamodb.TableIndex[];
 	public metaAttributes: Record<string, Dynamodb.MetaAttributeOptions>;
@@ -210,24 +251,7 @@ class Dynamodb<T extends Dict = Dict> {
 	private onChange: Dynamodb.OnChange<T> | null;
 
 	constructor(options: Dynamodb.ConstructorOptions<T>) {
-		this.client = DynamoDBDocumentClient.from(
-			new DynamoDBClient({
-				credentials: {
-					accessKeyId: options.accessKeyId,
-					secretAccessKey: options.secretAccessKey
-				},
-				endpoint: options.endpoint,
-				maxAttempts: options.maxAttempts ?? 4,
-				region: options.region,
-				retryMode: options.retryMode ?? 'standard'
-			}),
-			options.translateConfig ?? {
-				marshallOptions: {
-					removeUndefinedValues: true
-				}
-			}
-		);
-
+		this.client = getClient(options);
 		this.indexes = options.indexes || [];
 		this.metaAttributes = _.mapValues(options.metaAttributes || {}, value => {
 			return _.isArray(value) ? { attributes: value, joiner: '#' } : value;

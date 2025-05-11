@@ -72,6 +72,27 @@ describe('/index.ts', () => {
 		db = factory({ onChange: onChangeMock });
 	});
 
+	describe('getClient', () => {
+		it('should all instances use the same client', async () => {
+			const clients1 = _.times(2, () => {
+				return Db.getClient({
+					accessKeyId: 'accessKeyId-1',
+					secretAccessKey: 'secretAccessKey-1',
+					region: 'region-1'
+				});
+			});
+
+			const client2 = Db.getClient({
+				accessKeyId: 'accessKeyId-2',
+				secretAccessKey: 'secretAccessKey-2',
+				region: 'region-2'
+			});
+
+			expect(clients1[0]).toBe(clients1[1]);
+			expect(clients1[0]).not.toBe(client2);
+		});
+	});
+
 	describe('createTable', () => {
 		it('should works', async () => {
 			const res = await db.createTable();
