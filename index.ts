@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import { promiseAll } from 'use-async-helpers';
 import {
 	BatchGetCommand,
 	BatchWriteCommand,
@@ -101,6 +102,11 @@ namespace Dynamodb {
 
 	export type GetOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	export type GetLastOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
+	export type GetSortSegmentsOptions = {
+		consistentRead?: boolean;
+		partitionKey: string;
+		segmentsSize: number;
+	};
 
 	export type MetaAttributeOptions = {
 		attributes: string[];
@@ -164,6 +170,21 @@ namespace Dynamodb {
 		startKey?: Dict | null;
 		strictChunkLimit?: boolean;
 		totalSegments?: number;
+	};
+
+	export type ScanAllPartitionOptions<R extends Dict = Dict> = {
+		attributeNames?: Record<string, string>;
+		attributeValues?: Record<string, any>;
+		chunkLimit?: number;
+		consistentRead?: boolean;
+		filterExpression?: string;
+		onChunk?: ({ count, items }: { count: number; items: Dynamodb.PersistedItem<R>[] }) => Promise<void> | void;
+		maxConcurrency?: number;
+		partitionKey: any;
+		scanIndexForward?: boolean;
+		segments?: [string | null, string | null][];
+		segmentsSize?: number;
+		select?: string[];
 	};
 
 	export type TableSchema = {
@@ -364,7 +385,7 @@ class Dynamodb<T extends Dict = Dict> {
 				const responseItems = res.Responses[this.table] as Dynamodb.PersistedItem<R>[];
 
 				if (options?.returnNullIfNotFound) {
-					items = new Array(keys.length).fill(null);
+					items = new Array(_.size(keys)).fill(null);
 
 					// Match returned items with their corresponding positions in the input keys array
 					for (const item of responseItems) {
@@ -669,6 +690,44 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		return _.pick(item, _.compact([this.schema.partition, this.schema.sort]));
+	}
+
+	async getSortSegments<R extends Dict = T>(options: Dynamodb.GetSortSegmentsOptions): Promise<[string | null, string | null][]> {
+		if (!this.schema.sort) {
+			throw new Error('scanPartition requires a table with a sort key');
+		}
+
+		// First, query the partition to get all sort keys
+		const sortKeysResponse = await this.query<R>({
+			consistentRead: options.consistentRead,
+			item: { [this.schema.partition]: options.partitionKey },
+			limit: Infinity,
+			select: [this.schema.partition, this.schema.sort!]
+		});
+
+		if (sortKeysResponse.count === 0) {
+			return [[null, null]];
+		}
+
+		let segments: [string | null, string | null][] = [];
+		let sortKeys = _.map(sortKeysResponse.items, this.schema.sort!).sort();
+
+		const sortKeysSize = _.size(sortKeys);
+		const segmentsCount = Math.ceil(sortKeysSize / options.segmentsSize);
+
+		for (let i = 0; i < segmentsCount; i++) {
+			const startIndex = i * options.segmentsSize;
+			const endIndex = Math.min((i + 1) * options.segmentsSize, sortKeysSize);
+
+			if (startIndex < sortKeysSize) {
+				const fromKey = startIndex === 0 ? null : sortKeys[startIndex];
+				const toKey = endIndex >= sortKeysSize ? null : sortKeys[endIndex - 1];
+
+				segments = [...segments, [fromKey, toKey]];
+			}
+		}
+
+		return segments;
 	}
 
 	private async notifyChanges(events: Dynamodb.ChangeEvent[]) {
@@ -1141,6 +1200,112 @@ class Dynamodb<T extends Dict = Dict> {
 			count,
 			items,
 			lastEvaluatedKey: res.LastEvaluatedKey ? this.getLastEvaluatedKey(items, scanCommandInput.IndexName) : null
+		};
+	}
+
+	async scanAllPartition<R extends Dict = T>(options: Dynamodb.ScanAllPartitionOptions<R>): Promise<Dynamodb.MultiResponse<R>> {
+		if (!this.schema.sort) {
+			throw new Error('scanPartition requires a table with a sort key');
+		}
+
+		options = _.defaults({}, options, {
+			chunkLimit: Infinity,
+			limit: 100,
+			maxConcurrency: 10,
+			scanIndexForward: true
+		});
+
+		let segments: [string | null, string | null][];
+
+		if (_.isArray(options.segments)) {
+			segments = options.segments;
+		} else {
+			segments = await this.getSortSegments({
+				consistentRead: options.consistentRead ?? false,
+				partitionKey: options.partitionKey,
+				segmentsSize: options.segmentsSize || 100
+			});
+		}
+
+		// Create query functions for each segment
+		const segmentTasks = _.map(segments, ([fromKey, toKey]) => {
+			return async () => {
+				const queryOptions: Dynamodb.QueryOptions<R> = {
+					attributeNames: options.attributeNames,
+					attributeValues: options.attributeValues,
+					chunkLimit: options.chunkLimit,
+					consistentRead: options.consistentRead ?? false,
+					filterExpression: options.filterExpression,
+					item: { [this.schema.partition]: options.partitionKey },
+					limit: Infinity,
+					onChunk: options.onChunk,
+					scanIndexForward: options.scanIndexForward,
+					select: options.select
+				};
+
+				// Add sort key range conditions
+				if (fromKey !== null || toKey !== null) {
+					let keyCondition = '';
+
+					const attributeNames: Record<string, string> = {
+						...(queryOptions.attributeNames || {}),
+						'#__sk': this.schema.sort!
+					};
+					const attributeValues: Record<string, any> = {
+						...(queryOptions.attributeValues || {})
+					};
+
+					if (fromKey !== null && toKey !== null) {
+						attributeValues[':__sk_from'] = fromKey;
+						attributeValues[':__sk_to'] = toKey;
+						keyCondition = '#__sk BETWEEN :__sk_from AND :__sk_to';
+					} else if (fromKey !== null) {
+						attributeValues[':__sk_from'] = fromKey;
+						keyCondition = '#__sk >= :__sk_from';
+					} else if (toKey !== null) {
+						attributeValues[':__sk_to'] = toKey;
+						keyCondition = '#__sk <= :__sk_to';
+					}
+
+					if (keyCondition) {
+						queryOptions.attributeNames = attributeNames;
+						queryOptions.attributeValues = attributeValues;
+						queryOptions.queryExpression = keyCondition;
+					}
+				}
+
+				return this.query<R>(queryOptions);
+			};
+		});
+
+		const responses = await promiseAll(segmentTasks, options.maxConcurrency!);
+
+		let items: Dynamodb.PersistedItem<R>[] = [];
+		let count = 0;
+
+		for (const response of responses) {
+			items = [...items, ...response.items];
+			count += response.count;
+		}
+
+		// Sort combined results if needed
+		if (this.schema.sort) {
+			items = items.sort((a, b) => {
+				const aVal = a[this.schema.sort!];
+				const bVal = b[this.schema.sort!];
+
+				if (options.scanIndexForward === false) {
+					return aVal > bVal ? -1 : aVal < bVal ? 1 : 0;
+				}
+
+				return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+			});
+		}
+
+		return {
+			count,
+			items,
+			lastEvaluatedKey: null // Not applicable for this operation
 		};
 	}
 

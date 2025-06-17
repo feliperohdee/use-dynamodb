@@ -394,6 +394,31 @@ const paginatedScan = await db.scan({
 });
 ```
 
+#### `scanAllPartition`
+
+Efficiently scans all items within a single partition by dividing the data into segments and querying them in parallel. This is particularly useful for processing large partitions that might otherwise exceed query limits or timeouts. This method requires the table to have a sort key.
+
+**Note:** When using `segmentsSize`, the method first performs a query to retrieve all sort keys for the partition to calculate the segments. This initial query can be costly for extremely large partitions. For better performance in such cases, consider providing pre-calculated `segments`.
+
+```typescript
+// Scan an entire partition in parallel, with 20 items per segment
+const { items, count } = await db.scanAllPartition({
+	partitionKey: 'product-category#electronics',
+	segmentsSize: 20,
+	maxConcurrency: 10 // Optional: number of parallel queries, defaults to 10
+});
+
+// Scan using manually defined segments
+const { items: manualSegmentItems } = await db.scanAllPartition({
+	partitionKey: 'product-category#electronics',
+	segments: [
+		[null, 'item-100'], // from beginning to item-100
+		['item-101', 'item-200'], // from item-101 to item-200
+		['item-201', null] // from item-201 to the end
+	]
+});
+```
+
 ### Batch Operations
 
 ```typescript
