@@ -1210,7 +1210,6 @@ class Dynamodb<T extends Dict = Dict> {
 
 		options = _.defaults({}, options, {
 			chunkLimit: Infinity,
-			limit: 100,
 			maxConcurrency: 10,
 			scanIndexForward: true
 		});
