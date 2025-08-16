@@ -11,7 +11,7 @@ type DbRecord = {
 	pk: string;
 };
 
-const createItems = (count: number) => {
+const createItems = ({ count }: { count: number }) => {
 	return _.times(count, i => {
 		return {
 			foo: `foo-${i}`,
@@ -74,7 +74,7 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should batch write, batch get and batch delete', async () => {
-			const batchWriteItems = await db.batchWrite(createItems(2));
+			const batchWriteItems = await db.batchWrite(createItems({ count: 2 }));
 			expect(
 				_.every(batchWriteItems, item => {
 					return _.isNumber(item.__ts);
@@ -106,7 +106,7 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should clear', async () => {
-			await db.batchWrite(createItems(2));
+			await db.batchWrite(createItems({ count: 2 }));
 
 			const res1 = await db.scan();
 			expect(res1.count).toEqual(2);
@@ -119,7 +119,7 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should clear by pk', async () => {
-			await db.batchWrite(createItems(2));
+			await db.batchWrite(createItems({ count: 2 }));
 
 			const res1 = await db.scan();
 			expect(res1.count).toEqual(2);
@@ -134,7 +134,7 @@ describe('/index-no-sort.ts', () => {
 
 	describe('delete', () => {
 		beforeEach(async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 
 			vi.spyOn(db, 'get');
 			vi.spyOn(db.client, 'send');
@@ -145,17 +145,17 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should return null if item not found', async () => {
-			const item = await db.delete({
+			const res = await db.delete({
 				filter: {
 					item: { pk: 'pk-100' }
 				}
 			});
 
-			expect(item).toBeNull();
+			expect(res).toBeNull();
 		});
 
 		it('should delete', async () => {
-			const item = await db.delete({
+			const res = await db.delete({
 				filter: {
 					item: { pk: 'pk-0' }
 				}
@@ -165,7 +165,7 @@ describe('/index-no-sort.ts', () => {
 				item: { pk: 'pk-0' }
 			});
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -178,7 +178,7 @@ describe('/index-no-sort.ts', () => {
 
 	describe('deleteMany', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(2));
+			await db.batchWrite(createItems({ count: 2 }));
 		});
 
 		afterAll(async () => {
@@ -196,7 +196,7 @@ describe('/index-no-sort.ts', () => {
 
 	describe('filter', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(2));
+			await db.batchWrite(createItems({ count: 2 }));
 		});
 
 		afterAll(async () => {
@@ -237,7 +237,7 @@ describe('/index-no-sort.ts', () => {
 
 	describe('get', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 		});
 
 		afterAll(async () => {
@@ -245,19 +245,19 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should return null if not found', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				item: { pk: 'pk-100' }
 			});
 
-			expect(item).toBeNull();
+			expect(res).toBeNull();
 		});
 
 		it('should get', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				item: { pk: 'pk-0' }
 			});
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -278,16 +278,16 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should put', async () => {
-			const item = await db.put({ pk: 'pk-0' });
+			const res = await db.put({ pk: 'pk-0' });
 
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(expect.objectContaining({ pk: 'pk-0' }));
+			expect(res.__createdAt).toEqual(res.__updatedAt);
+			expect(res).toEqual(expect.objectContaining({ pk: 'pk-0' }));
 		});
 	});
 
 	describe('query', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 		});
 
 		afterAll(async () => {
@@ -324,7 +324,7 @@ describe('/index-no-sort.ts', () => {
 
 	describe('scan', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 		});
 
 		afterAll(async () => {
@@ -361,9 +361,9 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should update', async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 
-			const item = await db.update({
+			const res = await db.update({
 				filter: {
 					item: { pk: 'pk-0' }
 				},
@@ -375,8 +375,8 @@ describe('/index-no-sort.ts', () => {
 				}
 			});
 
-			expect(item.__updatedAt).not.toEqual(item.__createdAt);
-			expect(item).toEqual(
+			expect(res.__updatedAt).not.toEqual(res.__createdAt);
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
 					gsiPk: 'gsi-pk-0',
@@ -387,7 +387,7 @@ describe('/index-no-sort.ts', () => {
 		});
 
 		it('should upsert', async () => {
-			const item = await db.update({
+			const res = await db.update({
 				filter: {
 					item: { pk: 'pk-0' }
 				},
@@ -400,8 +400,8 @@ describe('/index-no-sort.ts', () => {
 				upsert: true
 			});
 
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(
+			expect(res.__createdAt).toEqual(res.__updatedAt);
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-1',
 					pk: 'pk-0'

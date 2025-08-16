@@ -13,7 +13,7 @@ type Item = {
 	sk: string;
 };
 
-const createItems = (count: number, pk: string = '') => {
+const createItems = ({ count, pk = '' }: { count: number; pk?: string }) => {
 	return _.times(count, index => {
 		const sk = _.padStart(index.toString(), 3, '0');
 
@@ -115,7 +115,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should batch write, batch get and batch delete', async () => {
-			const batchWriteItems = await db.batchWrite(createItems(52));
+			const batchWriteItems = await db.batchWrite(createItems({ count: 52 }));
 			expect(
 				_.every(batchWriteItems, item => {
 					return _.isNumber(item.__ts);
@@ -161,6 +161,30 @@ describe('/index.ts', () => {
 			expect(res[1].count).toEqual(0);
 			expect(onChangeMock).toHaveBeenCalledTimes(9);
 		});
+
+		it('should batch write, batch get and batch delete with empty string in indexes', async () => {
+			const items = [
+				{
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
+				}
+			];
+
+			const batchWriteItems = await db.batchWrite(items);
+			expect(batchWriteItems[0].sk).toEqual('sk-empty');
+			expect(batchWriteItems[0].gsiSk).toEqual('');
+			expect(batchWriteItems[0].lsiSk).toEqual('');
+
+			const batchGetItems = await db.batchGet(items);
+			expect(batchGetItems?.[0]?.sk).toEqual('sk-empty');
+			expect(batchGetItems?.[0]?.gsiSk).toEqual('');
+			expect(batchGetItems?.[0]?.lsiSk).toEqual('');
+
+			const batchDeleteItems = await db.batchDelete(items);
+			expect(batchDeleteItems[0].sk).toEqual('sk-empty');
+		});
 	});
 
 	describe('clear', () => {
@@ -169,7 +193,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should clear', async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 
 			const res1 = await db.scan();
 			expect(res1.count).toEqual(10);
@@ -182,7 +206,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should clear by pk', async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 
 			const res1 = await db.scan();
 			expect(res1.count).toEqual(10);
@@ -197,7 +221,7 @@ describe('/index.ts', () => {
 
 	describe('delete', () => {
 		beforeEach(async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 
 			vi.spyOn(db, 'get');
 			vi.spyOn(db.client, 'send');
@@ -208,17 +232,17 @@ describe('/index.ts', () => {
 		});
 
 		it('should return null if item not found', async () => {
-			const item = await db.delete({
+			const res = await db.delete({
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-100' }
 				}
 			});
 
-			expect(item).toBeNull();
+			expect(res).toBeNull();
 		});
 
 		it('should delete', async () => {
-			const item = await db.delete({
+			const res = await db.delete({
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-000' }
 				}
@@ -249,7 +273,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -264,7 +288,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should delete with consistencyCheck = false', async () => {
-			const item = await db.delete({
+			const res = await db.delete({
 				consistencyCheck: false,
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-000' }
@@ -290,7 +314,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -305,7 +329,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should delete by queryExpression and condition', async () => {
-			const item = await db.delete({
+			const res = await db.delete({
 				attributeNames: { '#__pk': 'pk' },
 				attributeValues: { ':__pk': 'pk-0' },
 				conditionExpression: '#__pk = :__pk',
@@ -344,7 +368,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -357,11 +381,35 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
+
+		it('should delete with empty string in indexes', async () => {
+			await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			const res = await db.delete({
+				filter: {
+					item: { pk: 'pk-empty', sk: 'sk-empty' }
+				}
+			});
+
+			expect(res).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
+				})
+			);
+		});
 	});
 
 	describe('deleteMany', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(52));
+			await db.batchWrite(createItems({ count: 52 }));
 		});
 
 		afterAll(async () => {
@@ -422,7 +470,7 @@ describe('/index.ts', () => {
 
 	describe('filter', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 		});
 
 		afterAll(async () => {
@@ -490,11 +538,34 @@ describe('/index.ts', () => {
 			expect(count).toEqual(5);
 			expect(lastEvaluatedKey).toBeNull();
 		});
+
+		it('should filter with empty string in indexes', async () => {
+			await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			const { count, items } = await db.filter({
+				item: { pk: 'pk-empty', sk: 'sk-empty' }
+			});
+
+			expect(count).toEqual(1);
+			expect(items[0]).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
+				})
+			);
+		});
 	});
 
 	describe('get', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 		});
 
 		afterAll(async () => {
@@ -507,15 +578,15 @@ describe('/index.ts', () => {
 		});
 
 		it('should return null if not found', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				item: { pk: 'pk-0', sk: 'sk-100' }
 			});
 
-			expect(item).toBeNull();
+			expect(res).toBeNull();
 		});
 
 		it('should get', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				item: { pk: 'pk-0', sk: 'sk-000' }
 			});
 
@@ -531,7 +602,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -544,7 +615,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get by query expression', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				attributeNames: { '#__pk': 'pk' },
 				attributeValues: { ':__pk': 'pk-0' },
 				queryExpression: '#__pk = :__pk'
@@ -559,7 +630,7 @@ describe('/index.ts', () => {
 				startKey: null
 			});
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -572,7 +643,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get with select', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				item: { pk: 'pk-0', sk: 'sk-000' },
 				select: ['foo', 'gsiPk']
 			});
@@ -594,10 +665,32 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0'
+				})
+			);
+		});
+
+		it('should get with empty string in indexes', async () => {
+			await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			const res = await db.get({
+				item: { pk: 'pk-empty', sk: 'sk-empty' }
+			});
+
+			expect(res).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
 				})
 			);
 		});
@@ -605,7 +698,7 @@ describe('/index.ts', () => {
 
 	describe('getLast', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 		});
 
 		afterAll(async () => {
@@ -617,7 +710,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get the last item by partition key', async () => {
-			const item = await db.getLast({
+			const res = await db.getLast({
 				item: { pk: 'pk-0' }
 			});
 
@@ -639,7 +732,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-8',
 					gsiPk: 'gsi-pk-0',
@@ -652,7 +745,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should get the last item by partition and sort key', async () => {
-			const item = await db.getLast({
+			const res = await db.getLast({
 				item: { pk: 'pk-0', sk: 'sk-008' }
 			});
 
@@ -676,7 +769,7 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item).toEqual(
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-8',
 					gsiPk: 'gsi-pk-0',
@@ -684,6 +777,28 @@ describe('/index.ts', () => {
 					lsiSk: 'lsi-sk-008',
 					pk: 'pk-0',
 					sk: 'sk-008'
+				})
+			);
+		});
+
+		it('should get the last item with empty string in indexes', async () => {
+			await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			const res = await db.getLast({
+				item: { pk: 'pk-empty' }
+			});
+
+			expect(res).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
 				})
 			);
 		});
@@ -846,7 +961,7 @@ describe('/index.ts', () => {
 
 	describe('getSortSegments', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(10, 'pk-0'));
+			await db.batchWrite(createItems({ count: 10, pk: 'pk-0' }));
 		});
 
 		afterAll(async () => {
@@ -913,6 +1028,38 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('getStringIndexAttributes', () => {
+		it('should identify string sort keys from indexes only', () => {
+			// @ts-expect-error
+			const res = db.getStringIndexAttributes();
+			expect(res).toEqual(['lsiSk', 'gsiSk']);
+		});
+
+		it('should handle schema without sort key', () => {
+			db.indexes = [];
+			db.schema = {
+				partition: 'pk'
+			};
+
+			// @ts-expect-error
+			const res = db.getStringIndexAttributes();
+			expect(res).toEqual([]);
+		});
+
+		it('should handle numeric sort keys', () => {
+			db.indexes = [];
+			db.schema = {
+				partition: 'pk',
+				sort: 'sk',
+				sortType: 'N'
+			};
+
+			// @ts-expect-error
+			const res = db.getStringIndexAttributes();
+			expect(res).toEqual([]);
+		});
+	});
+
 	describe('put', () => {
 		beforeEach(() => {
 			vi.spyOn(db.client, 'send');
@@ -923,7 +1070,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should put', async () => {
-			const item = await db.put({
+			const res = await db.put({
 				pk: 'pk-0',
 				sk: 'sk-000'
 			});
@@ -945,8 +1092,8 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(
+			expect(res.__createdAt).toEqual(res.__updatedAt);
+			expect(res).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-000'
@@ -970,7 +1117,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should put overwriting', async () => {
-			const item = await db.get({
+			const res = await db.get({
 				item: { pk: 'pk-0', sk: 'sk-000' }
 			});
 
@@ -999,8 +1146,8 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(overwriteItem.__ts).toBeGreaterThan(item!.__ts);
-			expect(overwriteItem.__createdAt).not.toEqual(item!.__createdAt);
+			expect(overwriteItem.__ts).toBeGreaterThan(res!.__ts);
+			expect(overwriteItem.__createdAt).not.toEqual(res!.__createdAt);
 			expect(overwriteItem.__createdAt).toEqual(overwriteItem.__updatedAt);
 			expect(overwriteItem).toEqual(
 				expect.objectContaining({
@@ -1013,7 +1160,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should put with condition', async () => {
-			const item = await db.put(
+			const res = await db.put(
 				{
 					__createdAt: '2021-01-01T00:00:00.000Z',
 					pk: 'pk-0',
@@ -1045,8 +1192,8 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item.__createdAt).toEqual(item.__updatedAt);
-			expect(item).toEqual(
+			expect(res.__createdAt).toEqual(res.__updatedAt);
+			expect(res).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-001'
@@ -1057,7 +1204,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should put overriding createdAt', async () => {
-			const item = await db.put(
+			const res = await db.put(
 				{
 					__createdAt: '2021-01-01T00:00:00.000Z',
 					pk: 'pk-0',
@@ -1090,9 +1237,9 @@ describe('/index.ts', () => {
 				})
 			);
 
-			expect(item.__createdAt).not.toEqual(item.__updatedAt);
-			expect(item.__createdAt).toEqual('2021-01-01T00:00:00.000Z');
-			expect(item).toEqual(
+			expect(res.__createdAt).not.toEqual(res.__updatedAt);
+			expect(res.__createdAt).toEqual('2021-01-01T00:00:00.000Z');
+			expect(res).toEqual(
 				expect.objectContaining({
 					pk: 'pk-0',
 					sk: 'sk-002'
@@ -1101,11 +1248,29 @@ describe('/index.ts', () => {
 
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
+
+		it('should put with empty string in indexes', async () => {
+			const res = await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			expect(res).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
+				})
+			);
+		});
 	});
 
 	describe('query', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 		});
 
 		afterAll(async () => {
@@ -1746,6 +1911,29 @@ describe('/index.ts', () => {
 			expect(items[0].sk).toEqual('sk-008');
 			expect(items[items.length - 1].sk).toEqual('sk-000');
 		});
+
+		it('should query with empty string in indexes', async () => {
+			await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			const { count, items } = await db.query({
+				item: { pk: 'pk-empty', sk: 'sk-empty' }
+			});
+
+			expect(count).toEqual(1);
+			expect(items[0]).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
+				})
+			);
+		});
 	});
 
 	describe('replace', () => {
@@ -2004,6 +2192,37 @@ describe('/index.ts', () => {
 				expect((err as Error).name).toEqual('TransactionCanceledException');
 			}
 		});
+
+		it('should replace with empty string in indexes', async () => {
+			const replacedItem = await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			onChangeMock.mockClear();
+			const newItem = await db.replace(
+				{
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty-1',
+					sk: 'sk-empty-1'
+				},
+				replacedItem
+			);
+
+			expect(newItem).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty-1',
+					sk: 'sk-empty-1'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
 	});
 
 	describe('resolveSchema', () => {
@@ -2078,7 +2297,7 @@ describe('/index.ts', () => {
 
 	describe('scan', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(10));
+			await db.batchWrite(createItems({ count: 10 }));
 		});
 
 		afterAll(async () => {
@@ -2180,11 +2399,36 @@ describe('/index.ts', () => {
 
 			expect(count).toEqual(0);
 		});
+
+		it('should scan with empty string in indexes', async () => {
+			await db.put({
+				gsiSk: '',
+				lsiSk: '',
+				pk: 'pk-empty',
+				sk: 'sk-empty'
+			});
+
+			const { count, items } = await db.scan({
+				attributeNames: { '#pk': 'pk' },
+				attributeValues: { ':pk': 'pk-empty' },
+				filterExpression: '#pk = :pk'
+			});
+
+			expect(count).toEqual(1);
+			expect(items[0]).toEqual(
+				expect.objectContaining({
+					gsiSk: '',
+					lsiSk: '',
+					pk: 'pk-empty',
+					sk: 'sk-empty'
+				})
+			);
+		});
 	});
 
 	describe('scanAllPartition', () => {
 		beforeAll(async () => {
-			await db.batchWrite(createItems(100));
+			await db.batchWrite(createItems({ count: 100 }));
 		});
 
 		afterAll(async () => {
@@ -2291,6 +2535,114 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('transformFromStorage', () => {
+		it('should replace placeholder with empty strings in index keys only', () => {
+			const item = {
+				pk: 'test-pk',
+				sk: '__EMPTY_STRING__',
+				lsiSk: '__EMPTY_STRING__',
+				gsiSk: '__EMPTY_STRING__',
+				gsiPk: 'test-gsi-pk',
+				foo: 'test-value'
+			};
+
+			// @ts-expect-error
+			const res = db.transformFromStorage(item);
+			expect(res).toEqual({
+				pk: 'test-pk',
+				sk: '__EMPTY_STRING__', // Main sort key should not be transformed
+				lsiSk: '',
+				gsiSk: '',
+				gsiPk: 'test-gsi-pk',
+				foo: 'test-value'
+			});
+		});
+
+		it('should not affect non-placeholder strings', () => {
+			const item = {
+				pk: 'test-pk',
+				sk: 'non-placeholder',
+				lsiSk: 'also-non-placeholder',
+				gsiSk: 'another-value',
+				gsiPk: 'test-gsi-pk',
+				foo: 'test-value'
+			};
+
+			// @ts-expect-error
+			const res = db.transformFromStorage(item);
+			expect(res).toEqual(item);
+		});
+
+		it('should not affect non-key attributes with placeholder value', () => {
+			const item = {
+				pk: 'test-pk',
+				sk: 'test-sk',
+				lsiSk: 'test-lsi',
+				gsiSk: 'test-gsi',
+				gsiPk: 'test-gsi-pk',
+				foo: '__EMPTY_STRING__' // This should remain as is since foo is not a key
+			};
+
+			// @ts-expect-error
+			const res = db.transformFromStorage(item);
+			expect(res).toEqual(item);
+		});
+	});
+
+	describe('transformForStorage', () => {
+		it('should replace empty strings in index keys only with placeholder', () => {
+			const item = {
+				pk: 'test-pk',
+				sk: '',
+				lsiSk: '',
+				gsiSk: '',
+				gsiPk: 'test-gsi-pk',
+				foo: 'test-value'
+			};
+
+			// @ts-expect-error
+			const res = db.transformForStorage(item);
+			expect(res).toEqual({
+				pk: 'test-pk',
+				sk: '', // Main sort key should not be transformed
+				lsiSk: '__EMPTY_STRING__',
+				gsiSk: '__EMPTY_STRING__',
+				gsiPk: 'test-gsi-pk',
+				foo: 'test-value'
+			});
+		});
+
+		it('should not affect non-empty strings', () => {
+			const item = {
+				pk: 'test-pk',
+				sk: 'non-empty',
+				lsiSk: 'also-non-empty',
+				gsiSk: 'another-value',
+				gsiPk: 'test-gsi-pk',
+				foo: 'test-value'
+			};
+
+			// @ts-expect-error
+			const res = db.transformForStorage(item);
+			expect(res).toEqual(item);
+		});
+
+		it('should not affect non-key string attributes', () => {
+			const item = {
+				pk: 'test-pk',
+				sk: 'test-sk',
+				lsiSk: 'test-lsi',
+				gsiSk: 'test-gsi',
+				gsiPk: 'test-gsi-pk',
+				foo: '' // This should remain empty as it's not a key
+			};
+
+			// @ts-expect-error
+			const res = db.transformForStorage(item);
+			expect(res).toEqual(item);
+		});
+	});
+
 	describe('update', () => {
 		beforeEach(async () => {
 			vi.spyOn(db, 'get');
@@ -2303,9 +2655,9 @@ describe('/index.ts', () => {
 		});
 
 		it('should update without updateFunction neither updateExpression', async () => {
-			await db.batchWrite(createItems(1));
+			await db.batchWrite(createItems({ count: 1 }));
 
-			const item = await db.update({
+			const res = await db.update({
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-000' }
 				}
@@ -2335,8 +2687,8 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(item.__updatedAt).not.toEqual(item.__createdAt);
-			expect(item).toEqual(
+			expect(res.__updatedAt).not.toEqual(res.__createdAt);
+			expect(res).toEqual(
 				expect.objectContaining({
 					foo: 'foo-0',
 					gsiPk: 'gsi-pk-0',
@@ -2351,7 +2703,7 @@ describe('/index.ts', () => {
 		});
 
 		it('should upsert without updateFunction neither updateExpression', async () => {
-			const item = await db.update({
+			const res = await db.update({
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-000' }
 				},
@@ -2375,8 +2727,8 @@ describe('/index.ts', () => {
 				}
 			);
 
-			expect(item.__updatedAt).toEqual(item.__createdAt);
-			expect(item).toEqual(
+			expect(res.__updatedAt).toEqual(res.__createdAt);
+			expect(res).toEqual(
 				expect.objectContaining({
 					sk: 'sk-000',
 					pk: 'pk-0'
@@ -2405,9 +2757,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
 					attributeValues: { ':foo': 'foo-1', ':one': 1 },
 					filter: {
@@ -2448,8 +2800,8 @@ describe('/index.ts', () => {
 					})
 				);
 
-				expect(item.__createdAt).not.toEqual(item.__updatedAt);
-				expect(item).toEqual(
+				expect(res.__createdAt).not.toEqual(res.__updatedAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-0',
 						bar: 1,
@@ -2465,9 +2817,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update without filter.item', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
 					attributeValues: { ':foo': 'foo-1', ':one': 1 },
 					filter: {
@@ -2516,8 +2868,8 @@ describe('/index.ts', () => {
 					})
 				);
 
-				expect(item.__createdAt).not.toEqual(item.__updatedAt);
-				expect(item).toEqual(
+				expect(res.__createdAt).not.toEqual(res.__updatedAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-0',
 						bar: 1,
@@ -2533,7 +2885,7 @@ describe('/index.ts', () => {
 			});
 
 			it('should upsert', async () => {
-				const item = await db.update({
+				const res = await db.update({
 					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
 					attributeValues: { ':foo': 'foo-1', ':one': 1 },
 					filter: {
@@ -2573,8 +2925,8 @@ describe('/index.ts', () => {
 					})
 				);
 
-				expect(item.__createdAt).toEqual(item.__updatedAt);
-				expect(item).toEqual(
+				expect(res.__createdAt).toEqual(res.__updatedAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-1',
 						bar: 1,
@@ -2631,9 +2983,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
 					},
@@ -2674,8 +3026,8 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(item.__updatedAt).not.toEqual(item.__createdAt);
-				expect(item).toEqual(
+				expect(res.__updatedAt).not.toEqual(res.__createdAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-1',
 						gsiPk: 'gsi-pk-0',
@@ -2690,9 +3042,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update without filter.item', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					filter: {
 						attributeNames: { '#pk': 'pk', '#sk': 'sk' },
 						attributeValues: { ':pk': 'pk-0', ':sk': 'sk-000' },
@@ -2737,8 +3089,8 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(item.__updatedAt).not.toEqual(item.__createdAt);
-				expect(item).toEqual(
+				expect(res.__updatedAt).not.toEqual(res.__createdAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-1',
 						gsiPk: 'gsi-pk-0',
@@ -2753,9 +3105,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update with consistencyCheck = false', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					consistencyCheck: false,
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
@@ -2793,8 +3145,8 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(item.__updatedAt).not.toEqual(item.__createdAt);
-				expect(item).toEqual(
+				expect(res.__updatedAt).not.toEqual(res.__createdAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-1',
 						gsiPk: 'gsi-pk-0',
@@ -2809,7 +3161,7 @@ describe('/index.ts', () => {
 			});
 
 			it('should upsert', async () => {
-				const item = await db.update({
+				const res = await db.update({
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
 					},
@@ -2845,8 +3197,8 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(item.__createdAt).toEqual(item.__updatedAt);
-				expect(item).toEqual(
+				expect(res.__createdAt).toEqual(res.__updatedAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-1',
 						pk: 'pk-0',
@@ -2858,7 +3210,7 @@ describe('/index.ts', () => {
 			});
 
 			it('should upsert with consistencyCheck = false', async () => {
-				const item = await db.update({
+				const res = await db.update({
 					consistencyCheck: false,
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
@@ -2889,8 +3241,8 @@ describe('/index.ts', () => {
 					}
 				);
 
-				expect(item.__createdAt).toEqual(item.__updatedAt);
-				expect(item).toEqual(
+				expect(res.__createdAt).toEqual(res.__updatedAt);
+				expect(res).toEqual(
 					expect.objectContaining({
 						foo: 'foo-1',
 						pk: 'pk-0',
@@ -2902,7 +3254,7 @@ describe('/index.ts', () => {
 			});
 
 			it('should not update partition and sort', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
 				try {
 					await db.update({
@@ -2924,9 +3276,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update partition key with transaction', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					allowUpdatePartitionAndSort: true,
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
@@ -2967,7 +3319,7 @@ describe('/index.ts', () => {
 					})
 				);
 
-				expect(item).toEqual(
+				expect(res).toEqual(
 					expect.objectContaining({
 						pk: 'pk-1',
 						sk: 'sk-000'
@@ -2978,9 +3330,9 @@ describe('/index.ts', () => {
 			});
 
 			it('should update sort key with transaction', async () => {
-				await db.batchWrite(createItems(1));
+				await db.batchWrite(createItems({ count: 1 }));
 
-				const item = await db.update({
+				const res = await db.update({
 					allowUpdatePartitionAndSort: true,
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
@@ -3021,7 +3373,7 @@ describe('/index.ts', () => {
 					})
 				);
 
-				expect(item).toEqual(
+				expect(res).toEqual(
 					expect.objectContaining({
 						pk: 'pk-0',
 						sk: 'sk-001'
@@ -3029,6 +3381,38 @@ describe('/index.ts', () => {
 				);
 
 				expect(onChangeMock).toHaveBeenCalledTimes(2);
+			});
+
+			it('should update with empty string in indexes', async () => {
+				await db.put({
+					pk: 'pk-update-empty',
+					sk: 'sk-0',
+					gsiSk: '',
+					lsiSk: '',
+					foo: 'original-value'
+				});
+
+				const res = await db.update({
+					filter: {
+						item: { pk: 'pk-update-empty', sk: 'sk-0' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'updated-value'
+						};
+					}
+				});
+
+				expect(res).toEqual(
+					expect.objectContaining({
+						pk: 'pk-update-empty',
+						sk: 'sk-0',
+						gsiSk: '',
+						lsiSk: '',
+						foo: 'updated-value'
+					})
+				);
 			});
 		});
 	});

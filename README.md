@@ -22,7 +22,6 @@ A TypeScript library that provides a simplified interface for interacting with A
 - 🔒 Conditional updates and transactions
 - 🎯 Change tracking with callbacks
 - 🔄 Configurable retry strategy
-- 🔗 Advanced metadata attribute generation with custom transformations
 
 ## 📦 Installation
 
@@ -43,30 +42,6 @@ The library supports several configuration options for customizing its behavior:
 - `table`: Name of your DynamoDB table
 - `schema`: Defines the table's partition and sort keys
 - `indexes`: Array of GSI (Global Secondary Indexes) and LSI (Local Secondary Indexes) configurations
-
-#### Enhanced Metadata Configuration
-
-The `metaAttributes` configuration now supports two formats for more flexible metadata generation:
-
-1. Simple Array Format:
-
-```typescript
-metaAttributes: {
-  'combined-field': ['field1', 'field2']  // Uses default joiner '#'
-}
-```
-
-2. Advanced Options Format:
-
-```typescript
-metaAttributes: {
-  'combined-field': {
-    attributes: ['field1', 'field2'],
-    joiner: '-',  // Custom joiner
-    transform: (attribute: string, value: any) => string | undefined  // Optional transform function
-  }
-}
-```
 
 Example with both formats:
 
@@ -104,24 +79,7 @@ const db = new Dynamodb<Item>({
 				nonKeyAttributes: ['title', 'description']
 			}
 		}
-	],
-	// Advanced metadata attribute configuration
-	metaAttributes: {
-		// Simple format - uses default joiner '#'
-		'title-category': ['title', 'category'],
-
-		// Advanced format with custom joiner and transform
-		'searchable-tags': {
-			attributes: ['tags'],
-			joiner: '|',
-			transform: (attribute, value) => {
-				if (attribute === 'tags' && Array.isArray(value)) {
-					return value.join('|').toLowerCase();
-				}
-				return;
-			}
-		}
-	}
+	]
 });
 ```
 

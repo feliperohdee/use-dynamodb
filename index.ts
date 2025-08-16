@@ -57,8 +57,8 @@ namespace Dynamodb {
 		accessKeyId: string;
 		indexes?: Dynamodb.TableIndex[];
 		endpoint?: string;
+		emptyStringPlaceholder?: string;
 		maxAttempts?: number;
-		metaAttributes?: Record<string, string[] | MetaAttributeOptions>;
 		onChange?: Dynamodb.OnChange<T>;
 		region: string;
 		retryMode?: 'standard' | 'adaptive';
@@ -106,12 +106,6 @@ namespace Dynamodb {
 		consistentRead?: boolean;
 		partitionKey: string;
 		segmentsSize: number;
-	};
-
-	export type MetaAttributeOptions = {
-		attributes: string[];
-		joiner: string;
-		transform?: (attribute: string, value: any) => string | void;
 	};
 
 	export type MultiResponse<T extends Dict = Dict, ReturnAsPersistedItem extends boolean = true> = {
@@ -265,18 +259,16 @@ class Dynamodb<T extends Dict = Dict> {
 
 	public client: DynamoDBDocumentClient;
 	public indexes: Dynamodb.TableIndex[];
-	public metaAttributes: Record<string, Dynamodb.MetaAttributeOptions>;
 	public schema: Dynamodb.TableSchema;
 	public table: string;
 
 	private onChange: Dynamodb.OnChange<T> | null;
+	private emptyStringPlaceholder: string;
 
 	constructor(options: Dynamodb.ConstructorOptions<T>) {
 		this.client = getClient(options);
+		this.emptyStringPlaceholder = options.emptyStringPlaceholder || '__EMPTY_STRING__';
 		this.indexes = options.indexes || [];
-		this.metaAttributes = _.mapValues(options.metaAttributes || {}, value => {
-			return _.isArray(value) ? { attributes: value, joiner: '#' } : value;
-		});
 		this.onChange = null;
 		this.schema = options.schema;
 		this.table = options.table;
@@ -288,7 +280,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async batchDelete(keys: Dict[]): Promise<Dict[]> {
 		keys = _.map(keys, item => {
-			return this.getSchemaKeys(item);
+			return this.getSchemaKeys(this.transformForStorage(item));
 		});
 
 		const chunks = _.chunk(keys, 25);
@@ -319,7 +311,9 @@ class Dynamodb<T extends Dict = Dict> {
 			);
 		}
 
-		return keys;
+		return _.map(keys, key => {
+			return this.transformFromStorage(key);
+		});
 	}
 
 	async batchGet<R extends Dict = T>(
@@ -327,7 +321,7 @@ class Dynamodb<T extends Dict = Dict> {
 		options?: Dynamodb.BatchGetOptions
 	): Promise<(Dynamodb.PersistedItem<R> | null)[] | Dynamodb.PersistedItem<R>[]> {
 		keys = _.map(keys, item => {
-			return this.getSchemaKeys(item);
+			return this.getSchemaKeys(this.transformForStorage(item));
 		});
 
 		let chunks = _.chunk(keys, 100);
@@ -382,7 +376,9 @@ class Dynamodb<T extends Dict = Dict> {
 			);
 
 			if (res.Responses) {
-				const responseItems = res.Responses[this.table] as Dynamodb.PersistedItem<R>[];
+				const responseItems = _.map(res.Responses[this.table], item => {
+					return this.transformFromStorage(item);
+				}) as Dynamodb.PersistedItem<R>[];
 
 				if (options?.returnNullIfNotFound) {
 					items = new Array(_.size(keys)).fill(null);
@@ -399,7 +395,12 @@ class Dynamodb<T extends Dict = Dict> {
 						}
 					}
 				} else {
-					items = [...items, ...(res.Responses[this.table] as Dynamodb.PersistedItem<R>[])];
+					items = [
+						...items,
+						..._.map(res.Responses[this.table], item => {
+							return this.transformFromStorage(item) as Dynamodb.PersistedItem<R>;
+						})
+					];
 				}
 			}
 		}
@@ -410,11 +411,8 @@ class Dynamodb<T extends Dict = Dict> {
 	async batchWrite<R extends Dict = T>(items: Dict[], ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>[]> {
 		const nowISO = new Date(ts).toISOString();
 		const persistedItems = _.map(items, item => {
-			const metaAttributesValues = this.generateMetaAttributes(item);
-
 			return {
-				...metaAttributesValues,
-				...item,
+				...this.transformForStorage(item),
 				__createdAt: nowISO,
 				__ts: ts,
 				__updatedAt: nowISO
@@ -449,7 +447,9 @@ class Dynamodb<T extends Dict = Dict> {
 			);
 		}
 
-		return persistedItems;
+		return _.map(persistedItems, item => {
+			return this.transformFromStorage(item);
+		}) as Dynamodb.PersistedItem<R>[];
 	}
 
 	async clear(pk?: string) {
@@ -485,7 +485,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const deleteCommandInput: DeleteCommandInput = {
 			ExpressionAttributeNames: options.attributeNames,
 			ExpressionAttributeValues: options.attributeValues,
-			Key: this.getSchemaKeys(currentItem),
+			Key: this.getSchemaKeys(this.transformForStorage(currentItem)),
 			ReturnValues: 'ALL_OLD',
 			TableName: this.table
 		};
@@ -520,7 +520,7 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		const res = await this.client.send(new DeleteCommand(deleteCommandInput));
-		const deletedItem = (res.Attributes as Dynamodb.PersistedItem<R>) || null;
+		const deletedItem = res.Attributes ? (this.transformFromStorage(res.Attributes) as Dynamodb.PersistedItem<R>) : null;
 
 		if (deletedItem) {
 			await this.notifyChanges([
@@ -578,28 +578,6 @@ class Dynamodb<T extends Dict = Dict> {
 		return res;
 	}
 
-	private generateMetaAttributes(item: Dict): Dict {
-		const metaAttributesValues: Dict = {};
-
-		_.forEach(this.metaAttributes, ({ attributes, joiner, transform }, key) => {
-			metaAttributesValues[key] = _.chain(attributes)
-				.map(attribute => {
-					let value = item[attribute];
-
-					if (_.isFunction(transform)) {
-						value = _.trim(transform(attribute, value) ?? '') || value;
-					}
-
-					return _.toString(value);
-				})
-				.compact()
-				.join(joiner)
-				.value();
-		});
-
-		return metaAttributesValues;
-	}
-
 	async get<R extends Dict = T>(options: Dynamodb.GetOptions): Promise<Dynamodb.PersistedItem<R> | null> {
 		if (
 			options.item &&
@@ -614,7 +592,7 @@ class Dynamodb<T extends Dict = Dict> {
 				(this.schema.partition && !this.schema.sort && options.item[this.schema.partition])
 			) {
 				const getCommandInput: GetCommandInput = {
-					Key: this.getSchemaKeys(options.item),
+					Key: this.getSchemaKeys(this.transformForStorage(options.item)),
 					TableName: this.table
 				};
 
@@ -639,7 +617,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 				const res = await this.client.send(new GetCommand(getCommandInput));
 
-				return (res.Item || null) as Dynamodb.PersistedItem<R> | null;
+				return res.Item ? (this.transformFromStorage(res.Item) as Dynamodb.PersistedItem<R>) : null;
 			}
 		}
 
@@ -730,6 +708,19 @@ class Dynamodb<T extends Dict = Dict> {
 		return segments;
 	}
 
+	private getStringIndexAttributes(): string[] {
+		const stringKeys: string[] = [];
+
+		// Add index sort keys that are string type
+		for (const index of this.indexes) {
+			if (index.sort && (!index.sortType || index.sortType === 'S')) {
+				stringKeys.push(index.sort);
+			}
+		}
+
+		return _.uniq(stringKeys);
+	}
+
 	private async notifyChanges(events: Dynamodb.ChangeEvent[]) {
 		if (!_.isFunction(this.onChange)) {
 			return;
@@ -740,10 +731,8 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async put<R extends Dict = T>(item: Dict, options: Dynamodb.PutOptions = {}, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
 		const nowISO = new Date(ts).toISOString();
-		const metaAttributesValues = this.generateMetaAttributes(item);
 		const persistedItem = {
-			...metaAttributesValues,
-			...item,
+			...this.transformForStorage(item),
 			__createdAt: options.useCurrentCreatedAtIfExists ? item.__createdAt || nowISO : nowISO,
 			__ts: ts,
 			__updatedAt: nowISO
@@ -785,7 +774,7 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		]);
 
-		return persistedItem;
+		return this.transformFromStorage(persistedItem) as Dynamodb.PersistedItem<R>;
 	}
 
 	async query<R extends Dict = T>(options: Dynamodb.QueryOptions<R>): Promise<Dynamodb.MultiResponse<R>> {
@@ -843,6 +832,7 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		if (options.item) {
+			const item = this.transformForStorage(options.item);
 			const { index, schema } = this.resolveSchema(options.item);
 
 			queryCommandInput.KeyConditionExpression = '#__pk = :__pk';
@@ -853,7 +843,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 			queryCommandInput.ExpressionAttributeValues = {
 				...queryCommandInput.ExpressionAttributeValues,
-				':__pk': options.item[schema.partition]
+				':__pk': item[schema.partition]
 			};
 
 			if (index) {
@@ -875,7 +865,7 @@ class Dynamodb<T extends Dict = Dict> {
 
 					queryCommandInput.ExpressionAttributeValues = {
 						...queryCommandInput.ExpressionAttributeValues,
-						':__sk': options.item[schema.sort]
+						':__sk': item[schema.sort]
 					};
 				}
 			}
@@ -895,7 +885,9 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		let res = await this.client.send(new QueryCommand(queryCommandInput));
-		let items = (res.Items || []) as Dynamodb.PersistedItem<R>[];
+		let items = _.map(res.Items || [], item => {
+			return this.transformFromStorage(item);
+		}) as Dynamodb.PersistedItem<R>[];
 		let count = _.size(items);
 		let evaluateLimit = queryCommandInput.Limit ?? Infinity;
 		let mustIncreaseEvaluateLimit = true;
@@ -925,12 +917,19 @@ class Dynamodb<T extends Dict = Dict> {
 			if (_.isFunction(options.onChunk)) {
 				await options.onChunk({
 					count: _.size(res.Items),
-					items: (res.Items || []) as Dynamodb.PersistedItem<R>[]
+					items: _.map(res.Items || [], item => {
+						return this.transformFromStorage(item);
+					}) as Dynamodb.PersistedItem<R>[]
 				});
 			}
 
 			if (res.Items) {
-				items = [...items, ...(res.Items as Dynamodb.PersistedItem<R>[])];
+				items = [
+					...items,
+					...(_.map(res.Items, item => {
+						return this.transformFromStorage(item);
+					}) as Dynamodb.PersistedItem<R>[])
+				];
 				count = _.size(items);
 			}
 		}
@@ -952,17 +951,15 @@ class Dynamodb<T extends Dict = Dict> {
 		ts: number = _.now()
 	): Promise<Dynamodb.PersistedItem<R>> {
 		const nowISO = new Date(ts).toISOString();
-		const metaAttributesValues = this.generateMetaAttributes(item);
 		const newItem = {
-			...metaAttributesValues,
-			...item,
+			...this.transformForStorage(item),
 			__createdAt: options.useCurrentCreatedAtIfExists ? item.__createdAt || replacedItem.__createdAt : replacedItem.__createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;
 
 		const deleteCommandInput: DeleteCommandInput = {
-			Key: this.getSchemaKeys(replacedItem),
+			Key: this.getSchemaKeys(this.transformForStorage(replacedItem)),
 			TableName: this.table
 		};
 
@@ -1041,7 +1038,7 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		]);
 
-		return newItem;
+		return this.transformFromStorage(newItem) as Dynamodb.PersistedItem<R>;
 	}
 
 	private resolveSchema(item: Dict): { index: string; schema: Dynamodb.TableSchema } {
@@ -1153,7 +1150,9 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		let res = await this.client.send(new ScanCommand(scanCommandInput));
-		let items = (res.Items || []) as Dynamodb.PersistedItem<R>[];
+		let items = _.map(res.Items || [], item => {
+			return this.transformFromStorage(item);
+		}) as Dynamodb.PersistedItem<R>[];
 		let count = _.size(items);
 		let evaluateLimit = scanCommandInput.Limit ?? Infinity;
 		let mustIncreaseEvaluateLimit = true;
@@ -1183,12 +1182,19 @@ class Dynamodb<T extends Dict = Dict> {
 			if (_.isFunction(options.onChunk)) {
 				await options.onChunk({
 					count: _.size(res.Items),
-					items: (res.Items || []) as Dynamodb.PersistedItem<R>[]
+					items: _.map(res.Items || [], item => {
+						return this.transformFromStorage(item);
+					}) as Dynamodb.PersistedItem<R>[]
 				});
 			}
 
 			if (res.Items) {
-				items = [...items, ...(res.Items as Dynamodb.PersistedItem<R>[])];
+				items = [
+					...items,
+					...(_.map(res.Items, item => {
+						return this.transformFromStorage(item);
+					}) as Dynamodb.PersistedItem<R>[])
+				];
 				count = _.size(items);
 			}
 		}
@@ -1255,14 +1261,21 @@ class Dynamodb<T extends Dict = Dict> {
 					};
 
 					if (fromKey !== null && toKey !== null) {
-						attributeValues[':__sk_from'] = fromKey;
-						attributeValues[':__sk_to'] = toKey;
+						const transformedFromKey = fromKey === '' ? this.emptyStringPlaceholder : fromKey;
+						const transformedToKey = toKey === '' ? this.emptyStringPlaceholder : toKey;
+
+						attributeValues[':__sk_from'] = transformedFromKey;
+						attributeValues[':__sk_to'] = transformedToKey;
 						keyCondition = '#__sk BETWEEN :__sk_from AND :__sk_to';
 					} else if (fromKey !== null) {
-						attributeValues[':__sk_from'] = fromKey;
+						const transformedFromKey = fromKey === '' ? this.emptyStringPlaceholder : fromKey;
+
+						attributeValues[':__sk_from'] = transformedFromKey;
 						keyCondition = '#__sk >= :__sk_from';
 					} else if (toKey !== null) {
-						attributeValues[':__sk_to'] = toKey;
+						const transformedToKey = toKey === '' ? this.emptyStringPlaceholder : toKey;
+
+						attributeValues[':__sk_to'] = transformedToKey;
 						keyCondition = '#__sk <= :__sk_to';
 					}
 
@@ -1326,6 +1339,32 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		return output;
+	}
+
+	private transformFromStorage(item: Dict): Dict {
+		const stringKeyAttributes = this.getStringIndexAttributes();
+		const transformedItem = _.cloneDeep(item);
+
+		for (const key of stringKeyAttributes) {
+			if (transformedItem[key] === this.emptyStringPlaceholder) {
+				transformedItem[key] = '';
+			}
+		}
+
+		return transformedItem;
+	}
+
+	private transformForStorage(item: Dict): Dict {
+		const stringKeyAttributes = this.getStringIndexAttributes();
+		const transformedItem = _.cloneDeep(item);
+
+		for (const key of stringKeyAttributes) {
+			if (transformedItem[key] === '') {
+				transformedItem[key] = this.emptyStringPlaceholder;
+			}
+		}
+
+		return transformedItem;
 	}
 
 	async update<R extends Dict = T>(options: Dynamodb.UpdateOptions<R>, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
@@ -1395,79 +1434,6 @@ class Dynamodb<T extends Dict = Dict> {
 			let res = await this.client.send(new UpdateCommand(updateCommandInput));
 			let updatedItem = res.Attributes as Dynamodb.PersistedItem<R>;
 
-			// Generate and update metaAttributes after the update operation
-			if (_.size(this.metaAttributes) > 0) {
-				const attributeNamesInUpdateExpression = updateCommandInput.UpdateExpression.match(/#\w+/g);
-				const updatedAttributes = _.reduce(
-					attributeNamesInUpdateExpression,
-					(reduction, name) => {
-						const attribute = updateCommandInput.ExpressionAttributeNames?.[name];
-
-						if (attribute) {
-							return reduction.add(attribute);
-						}
-
-						return reduction;
-					},
-					new Set<string>()
-				);
-
-				const affectedMetaAttributes = _.some(this.metaAttributes, ({ attributes }, key) => {
-					// if updatedAttributes has the key, it means the attribute is already updated
-					if (updatedAttributes.has(key)) {
-						return false;
-					}
-
-					return _.some(attributes, attribute => {
-						return updatedAttributes.has(attribute);
-					});
-				});
-
-				if (affectedMetaAttributes) {
-					const metaAttributesValues = this.generateMetaAttributes(updatedItem);
-					const toSnakeCase = _.memoize((key: string) => {
-						return _.snakeCase(key);
-					});
-
-					if (_.size(metaAttributesValues)) {
-						const res = await this.client.send(
-							new UpdateCommand({
-								ExpressionAttributeNames: _.reduce<Dict, Record<string, string>>(
-									metaAttributesValues,
-									(reduction, value, key) => {
-										reduction[`#${toSnakeCase(key)}`] = key;
-
-										return reduction;
-									},
-									{}
-								),
-								ExpressionAttributeValues: _.reduce<Dict, Dict>(
-									metaAttributesValues,
-									(reduction, value, key) => {
-										reduction[`:${toSnakeCase(key)}`] = value;
-
-										return reduction;
-									},
-									{}
-								),
-								Key: this.getSchemaKeys(updatedItem),
-								ReturnValues: 'ALL_NEW',
-								TableName: this.table,
-								UpdateExpression:
-									'SET ' +
-									_.map(metaAttributesValues, (value, key) => {
-										key = toSnakeCase(key);
-
-										return `#${key} = :${key}`;
-									}).join(', ')
-							})
-						);
-
-						updatedItem = res.Attributes as Dynamodb.PersistedItem<R>;
-					}
-				}
-			}
-
 			await this.notifyChanges([
 				{
 					item: updatedItem,
@@ -1478,7 +1444,7 @@ class Dynamodb<T extends Dict = Dict> {
 				}
 			]);
 
-			return updatedItem;
+			return this.transformFromStorage(updatedItem) as Dynamodb.PersistedItem<R>;
 		}
 		// end of updateExpression
 
@@ -1558,10 +1524,7 @@ class Dynamodb<T extends Dict = Dict> {
 			putOptions.conditionExpression = concatConditionExpression(putOptions.conditionExpression || '', options.conditionExpression);
 		}
 
-		const metaAttributes = this.generateMetaAttributes(updatedItem);
-		const metaAttributesKeys = _.keys(metaAttributes);
-
-		return this.put(_.omit(updatedItem, metaAttributesKeys), putOptions);
+		return this.put(updatedItem, putOptions);
 	}
 
 	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {
