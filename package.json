@@ -39,7 +39,7 @@
 		"npm:publish": "yarn test && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
 		"test": "vitest --fileParallelism=false --run",
 		"test:coverage": "rm -rf coverage && vitest --fileParallelism=false --run --coverage",
-		"test:watch": "vitest --fileParallelism=false --run --watch"
+		"test:watch": "vitest --fileParallelism=false"
 	},
 	"version": "1.0.72"
 }
