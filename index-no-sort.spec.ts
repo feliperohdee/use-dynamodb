@@ -24,10 +24,10 @@ const createItems = ({ count }: { count: number }) => {
 
 const factory = () => {
 	return new Db<DbRecord>({
-		accessKeyId: process.env.AWS_ACCESS_KEY || '',
+		accessKeyId: 'test',
 		endpoint: ENDPOINT,
 		region: 'us-east-1',
-		secretAccessKey: process.env.AWS_SECRET_KEY || '',
+		secretAccessKey: 'test',
 		indexes: [
 			{
 				name: 'gs-index',

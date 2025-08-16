@@ -36,9 +36,10 @@
 		"build": "rm -rf dist && yarn lint && tsc -p tsconfig.json",
 		"dev:dynamodb": "java -jar /Users/feliperohde/Documents/dynamodb-local/DynamoDBLocal.jar -dbPath ./dynamodb-local -sharedDb",
 		"lint": "prettier --write . && eslint --fix . && tsc -p tsconfig.json",
-		"npm:publish": "yarn test --run && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
-		"test": "./.test.sh",
-		"test:coverage": "rm -rf coverage && ./.test.sh --run --coverage"
+		"npm:publish": "yarn test && yarn build && yarn version --patch --no-git-tag-version && yarn publish --non-interactive",
+		"test": "vitest --fileParallelism=false --run",
+		"test:coverage": "rm -rf coverage && vitest --fileParallelism=false --run --coverage",
+		"test:watch": "vitest --fileParallelism=false --run --watch"
 	},
 	"version": "1.0.72"
 }
