@@ -316,10 +316,7 @@ class Dynamodb<T extends Dict = Dict> {
 		});
 	}
 
-	async batchGet<R extends Dict = T>(
-		keys: Dict[],
-		options?: Dynamodb.BatchGetOptions
-	): Promise<(Dynamodb.PersistedItem<R> | null)[] | Dynamodb.PersistedItem<R>[]> {
+	async batchGet<R extends Dict = T>(keys: Dict[], options?: Dynamodb.BatchGetOptions): Promise<(Dynamodb.PersistedItem<R> | null)[]> {
 		keys = _.map(keys, item => {
 			return this.getSchemaKeys(this.transformForStorage(item));
 		});
