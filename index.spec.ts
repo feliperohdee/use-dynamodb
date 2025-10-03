@@ -217,6 +217,22 @@ describe('/index.ts', () => {
 			const res2 = await db.scan();
 			expect(res2.count).toEqual(5);
 		});
+
+		it('should clear by query', async () => {
+			await db.batchWrite(createItems({ count: 10 }));
+
+			const res1 = await db.scan();
+			expect(res1.count).toEqual(10);
+
+			const { count } = await db.clear({
+				item: { pk: 'pk-0' }
+			});
+
+			expect(count).toEqual(5);
+
+			const res2 = await db.scan();
+			expect(res2.count).toEqual(5);
+		});
 	});
 
 	describe('delete', () => {

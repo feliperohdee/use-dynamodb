@@ -41,5 +41,5 @@
 		"test:coverage": "rm -rf coverage && vitest --fileParallelism=false --run --coverage",
 		"test:watch": "vitest --fileParallelism=false"
 	},
-	"version": "1.0.73"
+	"version": "1.0.74"
 }

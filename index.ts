@@ -449,10 +449,22 @@ class Dynamodb<T extends Dict = Dict> {
 		}) as Dynamodb.PersistedItem<R>[];
 	}
 
-	async clear(pk?: string) {
-		if (pk) {
+	async clear(input?: string | Omit<Dynamodb.QueryOptions, 'limit' | 'onChunk' | 'startKey'>) {
+		if (_.isString(input)) {
 			const { count } = await this.query({
-				item: { [this.schema.partition]: pk },
+				item: { [this.schema.partition]: input },
+				limit: Infinity,
+				onChunk: async ({ items }) => {
+					await this.batchDelete(items);
+				}
+			});
+
+			return { count };
+		}
+
+		if (_.isObject(input)) {
+			const { count } = await this.query({
+				...input,
 				limit: Infinity,
 				onChunk: async ({ items }) => {
 					await this.batchDelete(items);
