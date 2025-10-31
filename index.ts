@@ -225,7 +225,9 @@ const getClient = (options: {
 	retryMode?: 'standard' | 'adaptive';
 	translateConfig?: TranslateConfig;
 }) => {
-	const key = JSON.stringify(options);
+	const key = JSON.stringify(
+		_.pick(options, ['accessKeyId', 'secretAccessKey', 'endpoint', 'maxAttempts', 'region', 'retryMode', 'translateConfig'])
+	);
 
 	if (clientPool.has(key)) {
 		return clientPool.get(key)!;

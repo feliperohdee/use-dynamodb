@@ -1,7 +1,7 @@
 {
 	"devDependencies": {
-		"@aws-sdk/client-dynamodb": "^3.868.0",
-		"@aws-sdk/lib-dynamodb": "^3.868.0",
+		"@aws-sdk/client-dynamodb": "^3.922.0",
+		"@aws-sdk/lib-dynamodb": "^3.922.0",
 		"@types/lodash": "^4.17.13",
 		"@types/node": "^22.10.2",
 		"@vitest/coverage-v8": "^3.2.4",
@@ -14,8 +14,8 @@
 		"vitest": "^3.2.4"
 	},
 	"peerDependencies": {
-		"@aws-sdk/client-dynamodb": "^3.868.0",
-		"@aws-sdk/lib-dynamodb": "^3.868.0",
+		"@aws-sdk/client-dynamodb": "^3.922.0",
+		"@aws-sdk/lib-dynamodb": "^3.922.0",
 		"lodash": "^4.17.21",
 		"use-async-helpers": "^1.0.31"
 	},
@@ -41,5 +41,5 @@
 		"test:coverage": "rm -rf coverage && vitest --fileParallelism=false --run --coverage",
 		"test:watch": "vitest --fileParallelism=false"
 	},
-	"version": "1.0.74"
+	"version": "1.0.75"
 }
