@@ -257,6 +257,7 @@ const getClient = (options: {
 };
 
 class Dynamodb<T extends Dict = Dict> {
+	static clientPool = clientPool;
 	static getClient = getClient;
 
 	public client: DynamoDBDocumentClient;
