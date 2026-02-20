@@ -743,9 +743,21 @@ class Dynamodb<T extends Dict = Dict> {
 
 	async put<R extends Dict = T>(item: Dict, options: Dynamodb.PutOptions = {}, ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>> {
 		const nowISO = new Date(ts).toISOString();
+
+		let createdAt = nowISO;
+
+		if (options.useCurrentCreatedAtIfExists) {
+			if (item.__createdAt) {
+				createdAt = item.__createdAt;
+			} else {
+				const existing = await this.get({ item, select: ['__createdAt'] });
+				createdAt = existing?.__createdAt ?? nowISO;
+			}
+		}
+
 		const persistedItem = {
 			...this.transformForStorage(item),
-			__createdAt: options.useCurrentCreatedAtIfExists ? item.__createdAt || nowISO : nowISO,
+			__createdAt: createdAt,
 			__ts: ts,
 			__updatedAt: nowISO
 		} as Dynamodb.PersistedItem<R>;

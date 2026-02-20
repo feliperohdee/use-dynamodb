@@ -1265,6 +1265,26 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
+		it('should put preserving __createdAt from existing item via auto-fetch', async () => {
+			const original = await db.put({ pk: 'pk-0', sk: 'sk-003' }, { overwrite: true });
+
+			onChangeMock.mockClear();
+
+			const futureTs = original.__ts + 1000;
+			const res = await db.put({ pk: 'pk-0', sk: 'sk-003' }, { overwrite: true, useCurrentCreatedAtIfExists: true }, futureTs);
+
+			expect(res.__createdAt).toEqual(original.__createdAt);
+			expect(res.__updatedAt).not.toEqual(original.__createdAt);
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
+		it('should put using current timestamp when no existing item and useCurrentCreatedAtIfExists is true', async () => {
+			const res = await db.put({ pk: 'pk-0', sk: 'sk-004' }, { overwrite: true, useCurrentCreatedAtIfExists: true });
+
+			expect(res.__createdAt).toEqual(res.__updatedAt);
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
 		it('should put with empty string in indexes', async () => {
 			const res = await db.put({
 				gsiSk: '',
