@@ -934,7 +934,7 @@ class Dynamodb<T extends Dict = Dict> {
 				new QueryCommand({
 					...queryCommandInput,
 					ExclusiveStartKey: res.LastEvaluatedKey,
-					Limit: evaluateLimit
+					Limit: _.isFinite(evaluateLimit) ? evaluateLimit : Number.MAX_SAFE_INTEGER
 				})
 			);
 
@@ -1199,7 +1199,7 @@ class Dynamodb<T extends Dict = Dict> {
 				new ScanCommand({
 					...scanCommandInput,
 					ExclusiveStartKey: res.LastEvaluatedKey,
-					Limit: evaluateLimit
+					Limit: _.isFinite(evaluateLimit) ? evaluateLimit : Number.MAX_SAFE_INTEGER
 				})
 			);
 
