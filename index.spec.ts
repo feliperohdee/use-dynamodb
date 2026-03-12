@@ -303,9 +303,9 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledTimes(2);
 		});
 
-		it('should delete with consistencyCheck = false', async () => {
+		it('should delete with consistencyCheck = exists', async () => {
 			const res = await db.delete({
-				consistencyCheck: false,
+				consistencyCheck: 'exists',
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-000' }
 				}
@@ -326,6 +326,53 @@ describe('/index.ts', () => {
 						},
 						ReturnValues: 'ALL_OLD',
 						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(res).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-000',
+					lsiSk: 'lsi-sk-000',
+					sk: 'sk-000',
+					pk: 'pk-0'
+				})
+			);
+
+			expect(onChangeMock).toHaveBeenCalledTimes(2);
+		});
+
+		it('should delete with consistencyCheck = false', async () => {
+			const res = await db.delete({
+				consistencyCheck: false,
+				filter: {
+					item: { pk: 'pk-0', sk: 'sk-000' }
+				}
+			});
+
+			expect(db.get).toHaveBeenCalledWith({
+				item: { pk: 'pk-0', sk: 'sk-000' }
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						Key: {
+							pk: 'pk-0',
+							sk: 'sk-000'
+						},
+						ReturnValues: 'ALL_OLD',
+						TableName: 'use-dynamodb-spec'
+					})
+				})
+			);
+
+			expect(db.client.send).not.toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: expect.objectContaining({
+						ConditionExpression: expect.any(String)
 					})
 				})
 			);
@@ -2029,6 +2076,56 @@ describe('/index.ts', () => {
 			expect(onChangeMock).toHaveBeenCalledOnce();
 		});
 
+		it('should replace with consistencyCheck = exists', async () => {
+			const replacedItem = await db.put({
+				pk: 'pk-0',
+				sk: 'sk-000'
+			});
+
+			onChangeMock.mockClear();
+			const newItem = await db.replace(
+				{
+					__createdAt: '2021-01-01T00:00:00.000Z',
+					pk: 'pk-1',
+					sk: 'sk-001'
+				},
+				replacedItem,
+				{
+					consistencyCheck: 'exists'
+				}
+			);
+
+			expect(db.transaction).toHaveBeenCalledWith({
+				TransactItems: [
+					{
+						Delete: expect.objectContaining({
+							ConditionExpression: 'attribute_exists(#__pk)',
+							ExpressionAttributeNames: { '#__pk': 'pk' },
+							TableName: 'use-dynamodb-spec'
+						})
+					},
+					{
+						Put: expect.objectContaining({
+							ConditionExpression: 'attribute_not_exists(#__pk)',
+							ExpressionAttributeNames: { '#__pk': 'pk' },
+							TableName: 'use-dynamodb-spec'
+						})
+					}
+				]
+			});
+
+			expect(newItem.__createdAt).toEqual(replacedItem.__createdAt);
+			expect(newItem).toEqual({
+				pk: 'pk-1',
+				sk: 'sk-001',
+				__createdAt: replacedItem.__createdAt,
+				__ts: newItem.__ts,
+				__updatedAt: newItem.__updatedAt
+			});
+
+			expect(onChangeMock).toHaveBeenCalledOnce();
+		});
+
 		it('should replace with consistencyCheck = false', async () => {
 			const replacedItem = await db.put({
 				pk: 'pk-0',
@@ -2052,8 +2149,6 @@ describe('/index.ts', () => {
 				TransactItems: [
 					{
 						Delete: expect.objectContaining({
-							ConditionExpression: 'attribute_exists(#__pk)',
-							ExpressionAttributeNames: { '#__pk': 'pk' },
 							TableName: 'use-dynamodb-spec'
 						})
 					},
@@ -2064,6 +2159,17 @@ describe('/index.ts', () => {
 							TableName: 'use-dynamodb-spec'
 						})
 					}
+				]
+			});
+
+			expect(db.transaction).not.toHaveBeenCalledWith({
+				TransactItems: [
+					{
+						Delete: expect.objectContaining({
+							ConditionExpression: expect.any(String)
+						})
+					},
+					expect.anything()
 				]
 			});
 
@@ -3140,6 +3246,62 @@ describe('/index.ts', () => {
 				expect(onChangeMock).toHaveBeenCalledTimes(2);
 			});
 
+			it('should update with consistencyCheck = exists', async () => {
+				await db.batchWrite(createItems({ count: 1 }));
+
+				const res = await db.update({
+					consistencyCheck: 'exists',
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-000' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					}
+				});
+
+				expect(db.get).toHaveBeenCalledWith({
+					item: { pk: 'pk-0', sk: 'sk-000' },
+					consistentRead: true
+				});
+
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						__createdAt: expect.any(String),
+						__ts: expect.any(Number),
+						__updatedAt: expect.any(String),
+						foo: 'foo-1',
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-000',
+						lsiSk: 'lsi-sk-000',
+						pk: 'pk-0',
+						sk: 'sk-000'
+					},
+					{
+						attributeNames: { '#__pk': 'pk' },
+						conditionExpression: 'attribute_exists(#__pk)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
+				expect(res.__updatedAt).not.toEqual(res.__createdAt);
+				expect(res).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						gsiPk: 'gsi-pk-0',
+						gsiSk: 'gsi-sk-000',
+						lsiSk: 'lsi-sk-000',
+						sk: 'sk-000',
+						pk: 'pk-0'
+					})
+				);
+
+				expect(onChangeMock).toHaveBeenCalledTimes(2);
+			});
+
 			it('should update with consistencyCheck = false', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
 
@@ -3174,8 +3336,6 @@ describe('/index.ts', () => {
 						sk: 'sk-000'
 					},
 					{
-						attributeNames: { '#__pk': 'pk' },
-						conditionExpression: 'attribute_exists(#__pk)',
 						overwrite: true,
 						useCurrentCreatedAtIfExists: true
 					}
@@ -3228,6 +3388,50 @@ describe('/index.ts', () => {
 						},
 						attributeValues: { ':__curr_ts': 0 },
 						conditionExpression: '(attribute_not_exists(#__pk) OR #__ts = :__curr_ts)',
+						overwrite: true,
+						useCurrentCreatedAtIfExists: true
+					}
+				);
+
+				expect(res.__createdAt).toEqual(res.__updatedAt);
+				expect(res).toEqual(
+					expect.objectContaining({
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-000'
+					})
+				);
+
+				expect(onChangeMock).toHaveBeenCalledOnce();
+			});
+
+			it('should upsert with consistencyCheck = exists', async () => {
+				const res = await db.update({
+					consistencyCheck: 'exists',
+					filter: {
+						item: { pk: 'pk-0', sk: 'sk-000' }
+					},
+					updateFunction: item => {
+						return {
+							...item,
+							foo: 'foo-1'
+						};
+					},
+					upsert: true
+				});
+
+				expect(db.get).toHaveBeenCalledWith({
+					item: { pk: 'pk-0', sk: 'sk-000' },
+					consistentRead: true
+				});
+
+				expect(db.put).toHaveBeenCalledWith(
+					{
+						foo: 'foo-1',
+						pk: 'pk-0',
+						sk: 'sk-000'
+					},
+					{
 						overwrite: true,
 						useCurrentCreatedAtIfExists: true
 					}

@@ -78,7 +78,12 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
-		consistencyCheck?: boolean;
+		/**
+		 * - `true` (default): checks item exists AND `__ts` matches (optimistic locking)
+		 * - `'exists'`: checks item exists only
+		 * - `false`: no condition — unconditional delete by key
+		 */
+		consistencyCheck?: boolean | 'exists';
 		filter: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	};
 
@@ -145,7 +150,13 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
-		consistencyCheck?: boolean;
+		/**
+		 * Controls the DELETE side of the transaction.
+		 * - `true` (default): checks replaced item exists AND `__ts` matches (optimistic locking)
+		 * - `'exists'`: checks replaced item exists only
+		 * - `false`: no condition on the delete. The PUT side is controlled by `overwrite`
+		 */
+		consistencyCheck?: boolean | 'exists';
 		overwrite?: boolean;
 		useCurrentCreatedAtIfExists?: boolean;
 	};
@@ -207,7 +218,13 @@ namespace Dynamodb {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		conditionExpression?: string;
-		consistencyCheck?: boolean;
+		/**
+		 * Only applies when using `updateFunction` (ignored with `updateExpression`).
+		 * - `true` (default): checks item exists AND `__ts` matches (optimistic locking)
+		 * - `'exists'`: checks item exists only (when `upsert: true`, has no effect — same as `false`)
+		 * - `false`: no condition — unconditional put
+		 */
+		consistencyCheck?: boolean | 'exists';
 		filter: Omit<Dynamodb.FilterOptions, 'limit' | 'onChunk' | 'startKey'>;
 		updateExpression?: string;
 		updateFunction?: (item: Dynamodb.PersistedItem<R> | Dict, exists: boolean) => Dict | Promise<Dict>;
@@ -502,7 +519,9 @@ class Dynamodb<T extends Dict = Dict> {
 			TableName: this.table
 		};
 
-		if (options.consistencyCheck ?? true) {
+		const resolvedConsistencyCheck = options.consistencyCheck ?? true;
+
+		if (resolvedConsistencyCheck === true) {
 			deleteCommandInput.ExpressionAttributeNames = {
 				...deleteCommandInput.ExpressionAttributeNames,
 				'#__pk': this.schema.partition,
@@ -515,7 +534,7 @@ class Dynamodb<T extends Dict = Dict> {
 			};
 
 			deleteCommandInput.ConditionExpression = '(attribute_exists(#__pk) AND #__ts = :__curr_ts)';
-		} else {
+		} else if (resolvedConsistencyCheck === 'exists') {
 			deleteCommandInput.ExpressionAttributeNames = {
 				...deleteCommandInput.ExpressionAttributeNames,
 				'#__pk': this.schema.partition
@@ -987,7 +1006,9 @@ class Dynamodb<T extends Dict = Dict> {
 			TableName: this.table
 		};
 
-		if (options.consistencyCheck ?? true) {
+		const resolvedConsistencyCheck = options.consistencyCheck ?? true;
+
+		if (resolvedConsistencyCheck === true) {
 			deleteCommandInput.ExpressionAttributeNames = {
 				...deleteCommandInput.ExpressionAttributeNames,
 				'#__pk': this.schema.partition,
@@ -1000,7 +1021,7 @@ class Dynamodb<T extends Dict = Dict> {
 			};
 
 			deleteCommandInput.ConditionExpression = '(attribute_exists(#__pk) AND #__ts = :__curr_ts)';
-		} else {
+		} else if (resolvedConsistencyCheck === 'exists') {
 			deleteCommandInput.ExpressionAttributeNames = {
 				...deleteCommandInput.ExpressionAttributeNames,
 				'#__pk': this.schema.partition
@@ -1509,25 +1530,25 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		}
 
-		const putOptions: Dynamodb.PutOptions = options.upsert
-			? {
-					attributeNames: options.attributeNames,
-					attributeValues: options.attributeValues,
-					overwrite: true,
-					useCurrentCreatedAtIfExists: true
-				}
-			: {
-					attributeNames: {
-						...options.attributeNames,
-						'#__pk': this.schema.partition
-					},
-					attributeValues: options.attributeValues,
-					conditionExpression: 'attribute_exists(#__pk)',
-					overwrite: true,
-					useCurrentCreatedAtIfExists: true
-				};
+		const resolvedConsistencyCheck = options.consistencyCheck ?? true;
 
-		if (options.consistencyCheck ?? true) {
+		const putOptions: Dynamodb.PutOptions = {
+			attributeNames: options.attributeNames,
+			attributeValues: options.attributeValues,
+			overwrite: true,
+			useCurrentCreatedAtIfExists: true
+		};
+
+		if (resolvedConsistencyCheck === 'exists' && !options.upsert) {
+			putOptions.attributeNames = {
+				...putOptions.attributeNames,
+				'#__pk': this.schema.partition
+			};
+
+			putOptions.conditionExpression = 'attribute_exists(#__pk)';
+		}
+
+		if (resolvedConsistencyCheck === true) {
 			putOptions.conditionExpression = options.upsert
 				? '(attribute_not_exists(#__pk) OR #__ts = :__curr_ts)'
 				: '(attribute_exists(#__pk) AND #__ts = :__curr_ts)';
