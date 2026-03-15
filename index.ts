@@ -87,12 +87,13 @@ namespace Dynamodb {
 		filter: Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
 	};
 
-	export type DeleteManyOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
+	export type DeleteManyOptions = Omit<FilterOptions, 'chunkLimit' | 'discardChunks' | 'limit' | 'onChunk' | 'startKey'>;
 	export type FilterOptions<T extends Dict = Dict> = {
 		attributeNames?: Record<string, string>;
 		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
+		discardChunks?: boolean;
 		filterExpression?: string;
 		index?: string;
 		item?: Dict;
@@ -105,8 +106,8 @@ namespace Dynamodb {
 		startKey?: Dict | null;
 	};
 
-	export type GetOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
-	export type GetLastOptions = Omit<FilterOptions, 'chunkLimit' | 'limit' | 'onChunk' | 'startKey'>;
+	export type GetOptions = Omit<FilterOptions, 'chunkLimit' | 'discardChunks' | 'limit' | 'onChunk' | 'startKey'>;
+	export type GetLastOptions = Omit<FilterOptions, 'chunkLimit' | 'discardChunks' | 'limit' | 'onChunk' | 'startKey'>;
 	export type GetSortSegmentsOptions = {
 		consistentRead?: boolean;
 		partitionKey: string;
@@ -133,6 +134,7 @@ namespace Dynamodb {
 		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
+		discardChunks?: boolean;
 		filterExpression?: string;
 		index?: string;
 		item?: Dict;
@@ -166,6 +168,7 @@ namespace Dynamodb {
 		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
+		discardChunks?: boolean;
 		filterExpression?: string;
 		index?: string;
 		limit?: number;
@@ -182,6 +185,7 @@ namespace Dynamodb {
 		attributeValues?: Record<string, any>;
 		chunkLimit?: number;
 		consistentRead?: boolean;
+		discardChunks?: boolean;
 		filterExpression?: string;
 		onChunk?: ({ count, items }: { count: number; items: Dynamodb.PersistedItem<R>[] }) => Promise<void> | void;
 		maxConcurrency?: number;
@@ -469,7 +473,7 @@ class Dynamodb<T extends Dict = Dict> {
 		}) as Dynamodb.PersistedItem<R>[];
 	}
 
-	async clear(input?: string | Omit<Dynamodb.QueryOptions, 'limit' | 'onChunk' | 'startKey'>) {
+	async clear(input?: string | Omit<Dynamodb.QueryOptions, 'discardChunks' | 'limit' | 'onChunk' | 'startKey'>) {
 		if (_.isString(input)) {
 			const { count } = await this.query({
 				item: { [this.schema.partition]: input },
@@ -572,6 +576,7 @@ class Dynamodb<T extends Dict = Dict> {
 		const { items } = await this.filter<R>({
 			...options,
 			consistentRead: true,
+			discardChunks: false,
 			limit: Infinity,
 			onChunk: async ({ items }) => {
 				await this.batchDelete(items);
@@ -654,7 +659,6 @@ class Dynamodb<T extends Dict = Dict> {
 
 		const { items } = await this.filter<R>({
 			...options,
-			onChunk: () => {},
 			limit: 1,
 			startKey: null
 		});
@@ -927,6 +931,8 @@ class Dynamodb<T extends Dict = Dict> {
 			queryCommandInput.ScanIndexForward = options.scanIndexForward;
 		}
 
+		const discardChunks = options.discardChunks ?? _.isFunction(options.onChunk);
+
 		let res = await this.client.send(new QueryCommand(queryCommandInput));
 		let items = _.map(res.Items || [], item => {
 			return this.transformFromStorage(item);
@@ -957,28 +963,32 @@ class Dynamodb<T extends Dict = Dict> {
 				})
 			);
 
+			const chunkItems = _.map(res.Items || [], item => {
+				return this.transformFromStorage(item);
+			}) as Dynamodb.PersistedItem<R>[];
+
 			if (_.isFunction(options.onChunk)) {
 				await options.onChunk({
-					count: _.size(res.Items),
-					items: _.map(res.Items || [], item => {
-						return this.transformFromStorage(item);
-					}) as Dynamodb.PersistedItem<R>[]
+					count: _.size(chunkItems),
+					items: chunkItems
 				});
 			}
 
-			if (res.Items) {
-				items = [
-					...items,
-					...(_.map(res.Items, item => {
-						return this.transformFromStorage(item);
-					}) as Dynamodb.PersistedItem<R>[])
-				];
+			if (discardChunks) {
+				count += _.size(chunkItems);
+			} else {
+				items = [...items, ...chunkItems];
 				count = _.size(items);
 			}
 		}
 
-		items = _.take(items, options.limit);
-		count = _.size(items);
+		if (discardChunks) {
+			items = [];
+			count = Math.min(count, options.limit!);
+		} else {
+			items = _.take(items, options.limit);
+			count = _.size(items);
+		}
 
 		return {
 			count,
@@ -1194,6 +1204,8 @@ class Dynamodb<T extends Dict = Dict> {
 			scanCommandInput.TotalSegments = options.totalSegments;
 		}
 
+		const discardChunks = options.discardChunks ?? _.isFunction(options.onChunk);
+
 		let res = await this.client.send(new ScanCommand(scanCommandInput));
 		let items = _.map(res.Items || [], item => {
 			return this.transformFromStorage(item);
@@ -1224,28 +1236,32 @@ class Dynamodb<T extends Dict = Dict> {
 				})
 			);
 
+			const chunkItems = _.map(res.Items || [], item => {
+				return this.transformFromStorage(item);
+			}) as Dynamodb.PersistedItem<R>[];
+
 			if (_.isFunction(options.onChunk)) {
 				await options.onChunk({
-					count: _.size(res.Items),
-					items: _.map(res.Items || [], item => {
-						return this.transformFromStorage(item);
-					}) as Dynamodb.PersistedItem<R>[]
+					count: _.size(chunkItems),
+					items: chunkItems
 				});
 			}
 
-			if (res.Items) {
-				items = [
-					...items,
-					...(_.map(res.Items, item => {
-						return this.transformFromStorage(item);
-					}) as Dynamodb.PersistedItem<R>[])
-				];
+			if (discardChunks) {
+				count += _.size(chunkItems);
+			} else {
+				items = [...items, ...chunkItems];
 				count = _.size(items);
 			}
 		}
 
-		items = _.take(items, options.limit);
-		count = _.size(items);
+		if (discardChunks) {
+			items = [];
+			count = Math.min(count, options.limit!);
+		} else {
+			items = _.take(items, options.limit);
+			count = _.size(items);
+		}
 
 		return {
 			count,
@@ -1277,6 +1293,8 @@ class Dynamodb<T extends Dict = Dict> {
 			});
 		}
 
+		const discardChunks = options.discardChunks ?? _.isFunction(options.onChunk);
+
 		// Create query functions for each segment
 		const segmentTasks = _.map(segments, ([fromKey, toKey]) => {
 			return async () => {
@@ -1285,6 +1303,7 @@ class Dynamodb<T extends Dict = Dict> {
 					attributeValues: options.attributeValues,
 					chunkLimit: options.chunkLimit,
 					consistentRead: options.consistentRead ?? false,
+					discardChunks,
 					filterExpression: options.filterExpression,
 					item: { [this.schema.partition]: options.partitionKey },
 					limit: Infinity,
@@ -1336,6 +1355,14 @@ class Dynamodb<T extends Dict = Dict> {
 		});
 
 		const responses = await promiseAll(segmentTasks, options.maxConcurrency!);
+
+		if (discardChunks) {
+			return {
+				count: _.sumBy(responses, 'count'),
+				items: [],
+				lastEvaluatedKey: null
+			};
+		}
 
 		let items: Dynamodb.PersistedItem<R>[] = [];
 		let count = 0;

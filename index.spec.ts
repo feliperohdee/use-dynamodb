@@ -491,6 +491,7 @@ describe('/index.ts', () => {
 
 			expect(db.filter).toHaveBeenCalledWith({
 				consistentRead: true,
+				discardChunks: false,
 				item: { pk: 'pk-0' },
 				limit: Infinity,
 				onChunk: expect.any(Function),
@@ -520,6 +521,7 @@ describe('/index.ts', () => {
 					':to': 'sk-999'
 				},
 				consistentRead: true,
+				discardChunks: false,
 				limit: Infinity,
 				onChunk: expect.any(Function),
 				queryExpression: '#__pk = :__pk AND #sk BETWEEN :from AND :to',
@@ -688,7 +690,6 @@ describe('/index.ts', () => {
 				attributeNames: { '#__pk': 'pk' },
 				attributeValues: { ':__pk': 'pk-0' },
 				limit: 1,
-				onChunk: expect.any(Function),
 				queryExpression: '#__pk = :__pk',
 				startKey: null
 			});
@@ -1656,6 +1657,7 @@ describe('/index.ts', () => {
 			const onChunk = vi.fn();
 			const { count, lastEvaluatedKey } = await db.query({
 				chunkLimit: 1,
+				discardChunks: false,
 				item: { pk: 'pk-0' },
 				limit: 2,
 				onChunk
@@ -1710,10 +1712,40 @@ describe('/index.ts', () => {
 			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-002' });
 		});
 
+		it('should query with onChunk and discard accumulated items by default', async () => {
+			const onChunk = vi.fn();
+			const { count, items } = await db.query({
+				chunkLimit: 1,
+				item: { pk: 'pk-0' },
+				limit: 2,
+				onChunk
+			});
+
+			expect(onChunk).toHaveBeenCalledTimes(2);
+			expect(count).toEqual(2);
+			expect(items).toEqual([]);
+		});
+
+		it('should query with onChunk and keep accumulated items when discardChunks is false', async () => {
+			const onChunk = vi.fn();
+			const { count, items } = await db.query({
+				chunkLimit: 1,
+				discardChunks: false,
+				item: { pk: 'pk-0' },
+				limit: 2,
+				onChunk
+			});
+
+			expect(onChunk).toHaveBeenCalledTimes(2);
+			expect(count).toEqual(2);
+			expect(_.size(items)).toEqual(2);
+		});
+
 		it('should query by item until limit with LSI and onChunk', async () => {
 			const onChunk = vi.fn();
 			const { count, lastEvaluatedKey } = await db.query({
 				chunkLimit: 1,
+				discardChunks: false,
 				item: {
 					pk: 'pk-0',
 					lsiSk: 'lsi-sk-'
@@ -1788,6 +1820,7 @@ describe('/index.ts', () => {
 			const onChunk = vi.fn();
 			const { count, lastEvaluatedKey } = await db.query({
 				chunkLimit: 1,
+				discardChunks: false,
 				item: {
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-'
@@ -2454,6 +2487,7 @@ describe('/index.ts', () => {
 			const onChunk = vi.fn();
 			const { count, lastEvaluatedKey } = await db.scan({
 				chunkLimit: 1,
+				discardChunks: false,
 				limit: 2,
 				onChunk
 			});
@@ -2500,6 +2534,33 @@ describe('/index.ts', () => {
 
 			expect(count2).toEqual(8);
 			expect(lastEvaluatedKey2).toBeNull();
+		});
+
+		it('should scan with onChunk and discard accumulated items by default', async () => {
+			const onChunk = vi.fn();
+			const { count, items } = await db.scan({
+				chunkLimit: 1,
+				limit: 2,
+				onChunk
+			});
+
+			expect(onChunk).toHaveBeenCalledTimes(2);
+			expect(count).toEqual(2);
+			expect(items).toEqual([]);
+		});
+
+		it('should scan with onChunk and keep accumulated items when discardChunks is false', async () => {
+			const onChunk = vi.fn();
+			const { count, items } = await db.scan({
+				chunkLimit: 1,
+				discardChunks: false,
+				limit: 2,
+				onChunk
+			});
+
+			expect(onChunk).toHaveBeenCalledTimes(2);
+			expect(count).toEqual(2);
+			expect(_.size(items)).toEqual(2);
 		});
 
 		it('should scan with select', async () => {
@@ -2597,6 +2658,7 @@ describe('/index.ts', () => {
 				},
 				chunkLimit: Infinity,
 				consistentRead: false,
+				discardChunks: false,
 				filterExpression: undefined,
 				item: {
 					pk: 'pk-0'
@@ -2618,6 +2680,7 @@ describe('/index.ts', () => {
 				},
 				chunkLimit: Infinity,
 				consistentRead: false,
+				discardChunks: false,
 				filterExpression: undefined,
 				item: {
 					pk: 'pk-0'
@@ -2638,6 +2701,7 @@ describe('/index.ts', () => {
 				},
 				chunkLimit: Infinity,
 				consistentRead: false,
+				discardChunks: false,
 				filterExpression: undefined,
 				item: {
 					pk: 'pk-0'

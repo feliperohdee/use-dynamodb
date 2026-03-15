@@ -339,6 +339,7 @@ describe('/index-no-sort.ts', () => {
 			const onChunk = vi.fn();
 			const { items, count, lastEvaluatedKey } = await db.scan({
 				chunkLimit: 1,
+				discardChunks: false,
 				limit: 2,
 				onChunk
 			});
