@@ -982,10 +982,13 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		}
 
+		let truncated = false;
+
 		if (discardChunks) {
 			items = [];
 			count = Math.min(count, options.limit!);
 		} else {
+			truncated = _.size(items) > options.limit!;
 			items = _.take(items, options.limit);
 			count = _.size(items);
 		}
@@ -993,7 +996,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return {
 			count,
 			items,
-			lastEvaluatedKey: res.LastEvaluatedKey ? this.getLastEvaluatedKey(items, queryCommandInput.IndexName) : null
+			lastEvaluatedKey: res.LastEvaluatedKey || truncated ? this.getLastEvaluatedKey(items, queryCommandInput.IndexName) : null
 		};
 	}
 
@@ -1255,10 +1258,13 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		}
 
+		let truncated = false;
+
 		if (discardChunks) {
 			items = [];
 			count = Math.min(count, options.limit!);
 		} else {
+			truncated = _.size(items) > options.limit!;
 			items = _.take(items, options.limit);
 			count = _.size(items);
 		}
@@ -1266,7 +1272,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return {
 			count,
 			items,
-			lastEvaluatedKey: res.LastEvaluatedKey ? this.getLastEvaluatedKey(items, scanCommandInput.IndexName) : null
+			lastEvaluatedKey: res.LastEvaluatedKey || truncated ? this.getLastEvaluatedKey(items, scanCommandInput.IndexName) : null
 		};
 	}
 

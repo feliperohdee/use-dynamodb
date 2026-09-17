@@ -41,6 +41,12 @@ const factory = () => {
 	});
 };
 
+const wait = (ms: number): Promise<void> => {
+	return new Promise<void>(resolve => {
+		setTimeout(resolve, ms);
+	});
+};
+
 describe('/index-no-sort.ts', () => {
 	let db: Db<DbRecord>;
 
@@ -363,6 +369,8 @@ describe('/index-no-sort.ts', () => {
 
 		it('should update', async () => {
 			await db.batchWrite(createItems({ count: 1 }));
+
+			await wait(5);
 
 			const res = await db.update({
 				filter: {

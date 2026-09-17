@@ -58,6 +58,12 @@ const factory = ({ onChange }: { onChange: Mock }) => {
 	});
 };
 
+const wait = (ms: number): Promise<void> => {
+	return new Promise<void>(resolve => {
+		setTimeout(resolve, ms);
+	});
+};
+
 describe('/index.ts', () => {
 	let db: Db<Item>;
 	let onChangeMock: Mock;
@@ -1185,6 +1191,8 @@ describe('/index.ts', () => {
 				item: { pk: 'pk-0', sk: 'sk-000' }
 			});
 
+			await wait(5);
+
 			const overwriteItem = await db.put(
 				{
 					pk: 'pk-0',
@@ -1893,6 +1901,56 @@ describe('/index.ts', () => {
 			});
 		});
 
+		it('should query with filter until buffer truncates and return next page key', async () => {
+			const { count, items, lastEvaluatedKey } = await db.query({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo <> :foo',
+				item: { pk: 'pk-0' },
+				limit: 2
+			});
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(count).toEqual(2);
+			expect(_.map(items, 'sk')).toEqual(['sk-002', 'sk-004']);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-004' });
+		});
+
+		it('should query remaining filtered items from truncated lastEvaluatedKey', async () => {
+			const { items, lastEvaluatedKey } = await db.query({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo <> :foo',
+				item: { pk: 'pk-0' },
+				limit: 2
+			});
+
+			const nextPage = await db.query({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo <> :foo',
+				item: { pk: 'pk-0' },
+				startKey: lastEvaluatedKey
+			});
+
+			expect(nextPage.count).toEqual(2);
+			expect(nextPage.lastEvaluatedKey).toBeNull();
+			expect([..._.map(items, 'sk'), ..._.map(nextPage.items, 'sk')]).toEqual(['sk-002', 'sk-004', 'sk-006', 'sk-008']);
+		});
+
+		it('should query with filter and return null lastEvaluatedKey when nothing was truncated', async () => {
+			const { count, items, lastEvaluatedKey } = await db.query({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo <> :foo',
+				item: { pk: 'pk-0' }
+			});
+
+			expect(count).toEqual(4);
+			expect(_.map(items, 'sk')).toEqual(['sk-002', 'sk-004', 'sk-006', 'sk-008']);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
 		it('should by item query with consistentRead', async () => {
 			const { count } = await db.query({
 				item: { pk: 'pk-0' },
@@ -2563,6 +2621,63 @@ describe('/index.ts', () => {
 			expect(_.size(items)).toEqual(2);
 		});
 
+		it('should scan with filter until buffer truncates and return next page key', async () => {
+			const { count, items, lastEvaluatedKey } = await db.scan({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				chunkLimit: 5,
+				filterExpression: '#foo <> :foo',
+				limit: 6
+			});
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(count).toEqual(6);
+			expect(_.map(items, 'sk')).toEqual(['sk-001', 'sk-003', 'sk-005', 'sk-007', 'sk-009', 'sk-002']);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-002' });
+		});
+
+		it('should scan remaining filtered items from truncated lastEvaluatedKey', async () => {
+			const { items, lastEvaluatedKey } = await db.scan({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				chunkLimit: 5,
+				filterExpression: '#foo <> :foo',
+				limit: 6
+			});
+
+			const nextPage = await db.scan({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo <> :foo',
+				startKey: lastEvaluatedKey
+			});
+
+			expect(nextPage.count).toEqual(3);
+			expect(nextPage.lastEvaluatedKey).toBeNull();
+			expect(_.sortBy([..._.map(items, 'foo'), ..._.map(nextPage.items, 'foo')])).toEqual([
+				'foo-1',
+				'foo-2',
+				'foo-3',
+				'foo-4',
+				'foo-5',
+				'foo-6',
+				'foo-7',
+				'foo-8',
+				'foo-9'
+			]);
+		});
+
+		it('should scan with filter and return null lastEvaluatedKey when nothing was truncated', async () => {
+			const { count, lastEvaluatedKey } = await db.scan({
+				attributeNames: { '#foo': 'foo' },
+				attributeValues: { ':foo': 'foo-0' },
+				filterExpression: '#foo <> :foo'
+			});
+
+			expect(count).toEqual(9);
+			expect(lastEvaluatedKey).toBeNull();
+		});
+
 		it('should scan with select', async () => {
 			const { count, items } = await db.scan({
 				select: ['foo', 'gsiPk']
@@ -2863,6 +2978,8 @@ describe('/index.ts', () => {
 		it('should update without updateFunction neither updateExpression', async () => {
 			await db.batchWrite(createItems({ count: 1 }));
 
+			await wait(5);
+
 			const res = await db.update({
 				filter: {
 					item: { pk: 'pk-0', sk: 'sk-000' }
@@ -2965,6 +3082,8 @@ describe('/index.ts', () => {
 			it('should update', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
 
+				await wait(5);
+
 				const res = await db.update({
 					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
 					attributeValues: { ':foo': 'foo-1', ':one': 1 },
@@ -3024,6 +3143,8 @@ describe('/index.ts', () => {
 
 			it('should update without filter.item', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
+
+				await wait(5);
 
 				const res = await db.update({
 					attributeNames: { '#foo': 'foo', '#bar': 'bar' },
@@ -3191,6 +3312,8 @@ describe('/index.ts', () => {
 			it('should update', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
 
+				await wait(5);
+
 				const res = await db.update({
 					filter: {
 						item: { pk: 'pk-0', sk: 'sk-000' }
@@ -3249,6 +3372,8 @@ describe('/index.ts', () => {
 
 			it('should update without filter.item', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
+
+				await wait(5);
 
 				const res = await db.update({
 					filter: {
@@ -3313,6 +3438,8 @@ describe('/index.ts', () => {
 			it('should update with consistencyCheck = exists', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
 
+				await wait(5);
+
 				const res = await db.update({
 					consistencyCheck: 'exists',
 					filter: {
@@ -3368,6 +3495,8 @@ describe('/index.ts', () => {
 
 			it('should update with consistencyCheck = false', async () => {
 				await db.batchWrite(createItems({ count: 1 }));
+
+				await wait(5);
 
 				const res = await db.update({
 					consistencyCheck: false,
@@ -3575,7 +3704,7 @@ describe('/index.ts', () => {
 						}
 					});
 				} catch (err) {
-					expect(err.name).toContain('ConditionalCheckFailedException');
+					expect((err as Error).name).toContain('ConditionalCheckFailedException');
 				}
 			});
 
