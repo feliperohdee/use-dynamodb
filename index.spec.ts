@@ -120,6 +120,10 @@ describe('/index.ts', () => {
 			await db.clear();
 		});
 
+		afterEach(() => {
+			vi.restoreAllMocks();
+		});
+
 		it('should batch write, batch get and batch delete', async () => {
 			const batchWriteItems = await db.batchWrite(createItems({ count: 52 }));
 			expect(
@@ -190,6 +194,130 @@ describe('/index.ts', () => {
 
 			const batchDeleteItems = await db.batchDelete(items);
 			expect(batchDeleteItems[0].sk).toEqual('sk-empty');
+		});
+
+		it('should batch delete retrying unprocessed items', async () => {
+			const items = await db.batchWrite(createItems({ count: 3 }));
+			const keys = _.map(items, item => {
+				return _.pick(item, ['pk', 'sk']);
+			});
+
+			vi.spyOn(db.client, 'send').mockImplementationOnce(async command => {
+				return { UnprocessedItems: _.get(command, 'input.RequestItems') };
+			});
+
+			await db.batchDelete(keys);
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(db.client.send).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					input: {
+						RequestItems: {
+							'use-dynamodb-spec': _.map(keys, key => {
+								return {
+									DeleteRequest: { Key: key }
+								};
+							})
+						}
+					}
+				})
+			);
+
+			const res = await db.batchGet(keys);
+
+			expect(res).toEqual([]);
+		});
+
+		it('should batch get with select and returnNullIfNotFound in key order', async () => {
+			await db.batchWrite(createItems({ count: 3 }));
+
+			const res = await db.batchGet(
+				[
+					{ pk: 'pk-0', sk: 'sk-002' },
+					{ pk: 'pk-inexistent', sk: 'sk-inexistent' },
+					{ pk: 'pk-0', sk: 'sk-000' }
+				],
+				{
+					returnNullIfNotFound: true,
+					select: ['foo']
+				}
+			);
+
+			expect(res).toEqual([{ foo: 'foo-2', pk: 'pk-0', sk: 'sk-002' }, null, { foo: 'foo-0', pk: 'pk-0', sk: 'sk-000' }]);
+		});
+
+		it('should batch get more than 100 keys in key order', async () => {
+			const batchWriteItems = await db.batchWrite(createItems({ count: 150 }));
+			const items = _.orderBy(batchWriteItems, 'sk', 'desc');
+
+			const res = await db.batchGet(items);
+
+			expect(res).toEqual(items);
+		});
+
+		it('should batch get more than 100 keys with returnNullIfNotFound in key order', async () => {
+			const batchWriteItems = await db.batchWrite(createItems({ count: 150 }));
+			const items = _.orderBy(batchWriteItems, 'sk', 'desc');
+
+			const res = await db.batchGet([..._.take(items, 120), { pk: 'pk-inexistent', sk: 'sk-inexistent' }, ..._.drop(items, 120)], {
+				returnNullIfNotFound: true
+			});
+
+			expect(res).toEqual([..._.take(items, 120), null, ..._.drop(items, 120)]);
+		});
+
+		it('should batch get retrying unprocessed keys', async () => {
+			const items = await db.batchWrite(createItems({ count: 3 }));
+			const keys = _.map(items, item => {
+				return _.pick(item, ['pk', 'sk']);
+			});
+
+			vi.spyOn(db.client, 'send').mockImplementationOnce(async () => {
+				return {
+					Responses: { 'use-dynamodb-spec': [items[0]] },
+					UnprocessedKeys: { 'use-dynamodb-spec': { Keys: [keys[1], keys[2]] } }
+				};
+			});
+
+			const res = await db.batchGet(keys);
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(db.client.send).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					input: {
+						RequestItems: { 'use-dynamodb-spec': { Keys: [keys[1], keys[2]] } }
+					}
+				})
+			);
+
+			expect(res).toEqual(items);
+		});
+
+		it('should batch write retrying unprocessed items', async () => {
+			vi.spyOn(db.client, 'send').mockImplementationOnce(async command => {
+				return { UnprocessedItems: _.get(command, 'input.RequestItems') };
+			});
+
+			const items = await db.batchWrite(createItems({ count: 3 }));
+
+			expect(db.client.send).toHaveBeenCalledTimes(2);
+			expect(db.client.send).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					input: {
+						RequestItems: {
+							'use-dynamodb-spec': _.map(items, item => {
+								return {
+									PutRequest: { Item: item }
+								};
+							})
+						}
+					}
+				})
+			);
+
+			const res = await db.batchGet(items);
+
+			expect(res).toEqual(items);
 		});
 	});
 
@@ -723,24 +851,26 @@ describe('/index.ts', () => {
 					input: {
 						ExpressionAttributeNames: {
 							'#__pe1': 'foo',
-							'#__pe2': 'gsiPk'
+							'#__pe2': 'gsiPk',
+							'#__pe3': 'pk',
+							'#__pe4': 'sk'
 						},
 						Key: {
 							pk: 'pk-0',
 							sk: 'sk-000'
 						},
-						ProjectionExpression: '#__pe1, #__pe2',
+						ProjectionExpression: '#__pe1, #__pe2, #__pe3, #__pe4',
 						TableName: 'use-dynamodb-spec'
 					}
 				})
 			);
 
-			expect(res).toEqual(
-				expect.objectContaining({
-					foo: 'foo-0',
-					gsiPk: 'gsi-pk-0'
-				})
-			);
+			expect(res).toEqual({
+				foo: 'foo-0',
+				gsiPk: 'gsi-pk-0',
+				pk: 'pk-0',
+				sk: 'sk-000'
+			});
 		});
 
 		it('should get with empty string in indexes', async () => {
@@ -954,6 +1084,75 @@ describe('/index.ts', () => {
 				pk: 'pk',
 				sk: 'sk'
 			});
+		});
+	});
+
+	describe('getProjection', () => {
+		it('should return attribute names and projection expression', () => {
+			// @ts-expect-error
+			const projection = db.getProjection(['foo']);
+
+			expect(projection).toEqual({
+				attributeNames: {
+					'#__pe1': 'foo',
+					'#__pe2': 'pk',
+					'#__pe3': 'sk'
+				},
+				projectionExpression: '#__pe1, #__pe2, #__pe3'
+			});
+		});
+
+		it('should return attribute names and projection expression with index keys', () => {
+			// @ts-expect-error
+			const projection = db.getProjection(['foo'], 'gs-index');
+
+			expect(projection).toEqual({
+				attributeNames: {
+					'#__pe1': 'foo',
+					'#__pe2': 'pk',
+					'#__pe3': 'sk',
+					'#__pe4': 'gsiPk',
+					'#__pe5': 'gsiSk'
+				},
+				projectionExpression: '#__pe1, #__pe2, #__pe3, #__pe4, #__pe5'
+			});
+		});
+	});
+
+	describe('getProjectionAttributes', () => {
+		it('should return select with table keys', () => {
+			// @ts-expect-error
+			const attributes = db.getProjectionAttributes(['foo']);
+
+			expect(attributes).toEqual(['foo', 'pk', 'sk']);
+		});
+
+		it('should not repeat a selected key', () => {
+			// @ts-expect-error
+			const attributes = db.getProjectionAttributes(['sk', 'foo']);
+
+			expect(attributes).toEqual(['sk', 'foo', 'pk']);
+		});
+
+		it('should return select with table keys and LSI keys', () => {
+			// @ts-expect-error
+			const attributes = db.getProjectionAttributes(['foo'], 'ls-index');
+
+			expect(attributes).toEqual(['foo', 'pk', 'sk', 'lsiSk']);
+		});
+
+		it('should return select with table keys and GSI keys', () => {
+			// @ts-expect-error
+			const attributes = db.getProjectionAttributes(['foo'], 'gs-index');
+
+			expect(attributes).toEqual(['foo', 'pk', 'sk', 'gsiPk', 'gsiSk']);
+		});
+
+		it('should return select with table keys with inexistent index', () => {
+			// @ts-expect-error
+			const attributes = db.getProjectionAttributes(['foo'], 'inexistent-index');
+
+			expect(attributes).toEqual(['foo', 'pk', 'sk']);
 		});
 	});
 
@@ -1985,10 +2184,12 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ProjectionExpression: '#__pe1, #__pe2',
+						ProjectionExpression: '#__pe1, #__pe2, #__pe3, #__pe4',
 						ExpressionAttributeNames: {
 							'#__pe1': 'foo',
 							'#__pe2': 'gsiPk',
+							'#__pe3': 'pk',
+							'#__pe4': 'sk',
 							'#__pk': 'pk'
 						},
 						ExpressionAttributeValues: {
@@ -2001,12 +2202,66 @@ describe('/index.ts', () => {
 			);
 
 			expect(count).toEqual(5);
-			expect(items[0]).toEqual(
-				expect.objectContaining({
-					foo: 'foo-0',
-					gsiPk: 'gsi-pk-0'
-				})
-			);
+			expect(items[0]).toEqual({
+				foo: 'foo-0',
+				gsiPk: 'gsi-pk-0',
+				pk: 'pk-0',
+				sk: 'sk-000'
+			});
+		});
+
+		it('should query by item with select and page from lastEvaluatedKey', async () => {
+			const { items, lastEvaluatedKey } = await db.query({
+				item: { pk: 'pk-0' },
+				limit: 2,
+				select: ['foo']
+			});
+
+			expect(items).toEqual([
+				{ foo: 'foo-0', pk: 'pk-0', sk: 'sk-000' },
+				{ foo: 'foo-2', pk: 'pk-0', sk: 'sk-002' }
+			]);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-0', sk: 'sk-002' });
+
+			const nextPage = await db.query({
+				item: { pk: 'pk-0' },
+				select: ['foo'],
+				startKey: lastEvaluatedKey
+			});
+
+			expect(nextPage.items).toEqual([
+				{ foo: 'foo-4', pk: 'pk-0', sk: 'sk-004' },
+				{ foo: 'foo-6', pk: 'pk-0', sk: 'sk-006' },
+				{ foo: 'foo-8', pk: 'pk-0', sk: 'sk-008' }
+			]);
+			expect(nextPage.lastEvaluatedKey).toBeNull();
+		});
+
+		it('should query by item with GSI with select and page from lastEvaluatedKey', async () => {
+			const { items, lastEvaluatedKey } = await db.query({
+				item: { gsiPk: 'gsi-pk-0' },
+				limit: 2,
+				select: ['foo']
+			});
+
+			expect(items).toEqual([
+				{ foo: 'foo-0', gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-000', pk: 'pk-0', sk: 'sk-000' },
+				{ foo: 'foo-2', gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-002', pk: 'pk-0', sk: 'sk-002' }
+			]);
+			expect(lastEvaluatedKey).toEqual({ gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-002', pk: 'pk-0', sk: 'sk-002' });
+
+			const nextPage = await db.query({
+				item: { gsiPk: 'gsi-pk-0' },
+				select: ['foo'],
+				startKey: lastEvaluatedKey
+			});
+
+			expect(nextPage.items).toEqual([
+				{ foo: 'foo-4', gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-004', pk: 'pk-0', sk: 'sk-004' },
+				{ foo: 'foo-6', gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-006', pk: 'pk-0', sk: 'sk-006' },
+				{ foo: 'foo-8', gsiPk: 'gsi-pk-0', gsiSk: 'gsi-sk-008', pk: 'pk-0', sk: 'sk-008' }
+			]);
+			expect(nextPage.lastEvaluatedKey).toBeNull();
 		});
 
 		it('should query by expression', async () => {
@@ -2528,6 +2783,37 @@ describe('/index.ts', () => {
 		});
 	});
 
+	describe('retryUnprocessed', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('should resend only the unprocessed items until none are left', async () => {
+			const send = vi.fn().mockResolvedValueOnce({ b: 2 }).mockResolvedValueOnce({});
+
+			// @ts-expect-error
+			await db.retryUnprocessed({ a: 1, b: 2 }, send);
+
+			expect(send.mock.calls).toEqual([[{ a: 1, b: 2 }], [{ b: 2 }]]);
+		});
+
+		it('should throw when items stay unprocessed after every attempt', async () => {
+			vi.useFakeTimers();
+
+			const send = vi.fn().mockResolvedValue({ a: 1 });
+
+			try {
+				// @ts-expect-error
+				await Promise.all([db.retryUnprocessed({ a: 1 }, send), vi.runAllTimersAsync()]);
+
+				throw new Error('expected to throw');
+			} catch (err) {
+				expect((err as Error).message).toEqual('Batch request has unprocessed items');
+				expect(send).toHaveBeenCalledTimes(8);
+			}
+		});
+	});
+
 	describe('scan', () => {
 		beforeAll(async () => {
 			await db.batchWrite(createItems({ count: 10 }));
@@ -2686,10 +2972,12 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: expect.objectContaining({
-						ProjectionExpression: '#__pe1, #__pe2',
+						ProjectionExpression: '#__pe1, #__pe2, #__pe3, #__pe4',
 						ExpressionAttributeNames: {
 							'#__pe1': 'foo',
-							'#__pe2': 'gsiPk'
+							'#__pe2': 'gsiPk',
+							'#__pe3': 'pk',
+							'#__pe4': 'sk'
 						},
 						TableName: 'use-dynamodb-spec'
 					})
@@ -2697,7 +2985,42 @@ describe('/index.ts', () => {
 			);
 
 			expect(count).toEqual(10);
-			expect(_.keys(items[0])).toEqual(expect.arrayContaining(['foo', 'gsiPk']));
+			expect(items[0]).toEqual({
+				foo: 'foo-1',
+				gsiPk: 'gsi-pk-1',
+				pk: 'pk-1',
+				sk: 'sk-001'
+			});
+		});
+
+		it('should scan with select and page from lastEvaluatedKey', async () => {
+			const { items, lastEvaluatedKey } = await db.scan({
+				limit: 2,
+				select: ['foo']
+			});
+
+			expect(items).toEqual([
+				{ foo: 'foo-1', pk: 'pk-1', sk: 'sk-001' },
+				{ foo: 'foo-3', pk: 'pk-1', sk: 'sk-003' }
+			]);
+			expect(lastEvaluatedKey).toEqual({ pk: 'pk-1', sk: 'sk-003' });
+
+			const nextPage = await db.scan({
+				select: ['foo'],
+				startKey: lastEvaluatedKey
+			});
+
+			expect(nextPage.items).toEqual([
+				{ foo: 'foo-5', pk: 'pk-1', sk: 'sk-005' },
+				{ foo: 'foo-7', pk: 'pk-1', sk: 'sk-007' },
+				{ foo: 'foo-9', pk: 'pk-1', sk: 'sk-009' },
+				{ foo: 'foo-0', pk: 'pk-0', sk: 'sk-000' },
+				{ foo: 'foo-2', pk: 'pk-0', sk: 'sk-002' },
+				{ foo: 'foo-4', pk: 'pk-0', sk: 'sk-004' },
+				{ foo: 'foo-6', pk: 'pk-0', sk: 'sk-006' },
+				{ foo: 'foo-8', pk: 'pk-0', sk: 'sk-008' }
+			]);
+			expect(nextPage.lastEvaluatedKey).toBeNull();
 		});
 
 		it('should scan with segment and totalSegments', async () => {

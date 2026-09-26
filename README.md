@@ -211,6 +211,8 @@ const item = await db.getLast({
 });
 ```
 
+**Note:** `select` always includes the key attributes in the projection: the table's partition and sort keys, plus the index's partition and sort keys when the call uses an index. They come back in the returned items, so `lastEvaluatedKey` pagination and `batchGet` with `returnNullIfNotFound` keep working with any `select` (`get`, `query`, `scan`, `batchGet`).
+
 #### Update Item
 
 ```typescript
@@ -386,7 +388,7 @@ const items = await db.batchWrite([
 	{ pk: 'user#2', sk: 'profile', foo: 'baz' }
 ]);
 
-// Batch get
+// Batch get (rows come back in the order of the keys)
 const retrievedItems = await db.batchGet([
 	{ pk: 'user#1', sk: 'profile' },
 	{ pk: 'user#2', sk: 'profile' }
@@ -486,7 +488,7 @@ yarn test
 
 - The library automatically handles optimistic locking using the `__ts` attribute
 - All write operations (put, update, delete) trigger change events if an onChange handler is provided
-- Batch operations automatically handle chunking according to DynamoDB limits
+- Batch operations automatically handle chunking according to DynamoDB limits, and resend unprocessed keys/items with exponential backoff (up to 8 attempts, then they throw)
 - All timestamps are managed automatically (**createdAt, **updatedAt, \_\_ts)
 - Queries automatically handle pagination for large result sets
 - Indexes are automatically determined as LSI or GSI based on their partition key, with ability to force GSI using forceGlobal flag

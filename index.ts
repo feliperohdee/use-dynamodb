@@ -2,7 +2,9 @@ import _ from 'lodash';
 import { promiseAll } from 'use-async-helpers';
 import {
 	BatchGetCommand,
+	BatchGetCommandInput,
 	BatchWriteCommand,
+	BatchWriteCommandInput,
 	DeleteCommand,
 	DeleteCommandInput,
 	DynamoDBDocumentClient,
@@ -236,6 +238,9 @@ namespace Dynamodb {
 	};
 }
 
+const BATCH_RETRY_BASE_DELAY = 50;
+const BATCH_RETRY_MAX_ATTEMPTS = 8;
+
 const clientPool = new Map<string, DynamoDBDocumentClient>();
 const getClient = (options: {
 	accessKeyId: string;
@@ -310,16 +315,19 @@ class Dynamodb<T extends Dict = Dict> {
 		const chunks = _.chunk(keys, 25);
 
 		for (const chunk of chunks) {
-			await this.client.send(
-				new BatchWriteCommand({
-					RequestItems: {
-						[this.table]: _.map(chunk, key => {
-							return {
-								DeleteRequest: { Key: key }
-							};
-						})
-					}
-				})
+			await this.retryUnprocessed<NonNullable<BatchWriteCommandInput['RequestItems']>>(
+				{
+					[this.table]: _.map(chunk, key => {
+						return {
+							DeleteRequest: { Key: key }
+						};
+					})
+				},
+				async requestItems => {
+					const res = await this.client.send(new BatchWriteCommand({ RequestItems: requestItems }));
+
+					return res.UnprocessedItems ?? {};
+				}
 			);
 
 			await this.notifyChanges(
@@ -345,88 +353,58 @@ class Dynamodb<T extends Dict = Dict> {
 			return this.getSchemaKeys(this.transformForStorage(item));
 		});
 
-		let chunks = _.chunk(keys, 100);
-		let items: (Dynamodb.PersistedItem<R> | null)[] = [];
-		let opts: {
-			attributeNames: Record<string, string>;
-			consistentRead: boolean;
-			projectionExpression: string;
+		const chunks = _.chunk(keys, 100);
+		const request: {
+			ConsistentRead: boolean;
+			ExpressionAttributeNames?: Record<string, string>;
+			ProjectionExpression?: string;
 		} = {
-			attributeNames: {},
-			consistentRead: options?.consistentRead ?? false,
-			projectionExpression: ''
+			ConsistentRead: options?.consistentRead ?? false
 		};
 
-		if (options?.select && _.size(options.select) > 0) {
-			opts.attributeNames = {
-				...opts.attributeNames,
-				..._.reduce(
-					options.select,
-					(reduction, attr, index) => {
-						reduction[`#__pe${index + 1}`] = attr;
+		if (_.size(options?.select) > 0) {
+			const { attributeNames, projectionExpression } = this.getProjection(options?.select);
 
-						return reduction;
-					},
-					{} as Record<string, string>
-				)
-			};
-
-			opts.projectionExpression = _.map(options.select, (attr, index) => {
-				return `#__pe${index + 1}`;
-			}).join(', ');
+			request.ExpressionAttributeNames = attributeNames;
+			request.ProjectionExpression = projectionExpression;
 		}
+
+		let rows: Dict[] = [];
 
 		for (const chunk of chunks) {
-			const res = await this.client.send(
-				new BatchGetCommand({
-					RequestItems: {
-						[this.table]:
-							opts.projectionExpression && _.size(opts.attributeNames) > 0
-								? {
-										ConsistentRead: opts.consistentRead,
-										ExpressionAttributeNames: opts.attributeNames,
-										Keys: chunk,
-										ProjectionExpression: opts.projectionExpression
-									}
-								: {
-										ConsistentRead: opts.consistentRead,
-										Keys: chunk
-									}
+			await this.retryUnprocessed<NonNullable<BatchGetCommandInput['RequestItems']>>(
+				{
+					[this.table]: {
+						...request,
+						Keys: chunk
 					}
-				})
-			);
+				},
+				async requestItems => {
+					const res = await this.client.send(new BatchGetCommand({ RequestItems: requestItems }));
+					const chunkRows = res.Responses?.[this.table] ?? [];
 
-			if (res.Responses) {
-				const responseItems = _.map(res.Responses[this.table], item => {
-					return this.transformFromStorage(item);
-				}) as Dynamodb.PersistedItem<R>[];
+					rows = [...rows, ...chunkRows];
 
-				if (options?.returnNullIfNotFound) {
-					items = new Array(_.size(keys)).fill(null);
-
-					// Match returned items with their corresponding positions in the input keys array
-					for (const item of responseItems) {
-						const keyMatch = this.getSchemaKeys(item);
-						const keyIndex = _.findIndex(keys, k => {
-							return _.isEqual(k, keyMatch);
-						});
-
-						if (keyIndex !== -1) {
-							items[keyIndex] = item;
-						}
-					}
-				} else {
-					items = [
-						...items,
-						..._.map(res.Responses[this.table], item => {
-							return this.transformFromStorage(item) as Dynamodb.PersistedItem<R>;
-						})
-					];
+					return res.UnprocessedKeys ?? {};
 				}
-			}
+			);
 		}
 
-		return items;
+		const rowsByKey = _.keyBy(rows, row => {
+			return JSON.stringify(this.getSchemaKeys(row));
+		});
+
+		const items = _.map(keys, key => {
+			const row = rowsByKey[JSON.stringify(key)];
+
+			return row ? (this.transformFromStorage(row) as Dynamodb.PersistedItem<R>) : null;
+		});
+
+		if (options?.returnNullIfNotFound) {
+			return items;
+		}
+
+		return _.compact(items);
 	}
 
 	async batchWrite<R extends Dict = T>(items: Dict[], ts: number = _.now()): Promise<Dynamodb.PersistedItem<R>[]> {
@@ -443,16 +421,19 @@ class Dynamodb<T extends Dict = Dict> {
 		const chunks = _.chunk(persistedItems, 25);
 
 		for (const chunk of chunks) {
-			await this.client.send(
-				new BatchWriteCommand({
-					RequestItems: {
-						[this.table]: _.map(chunk, item => {
-							return {
-								PutRequest: { Item: item }
-							};
-						})
-					}
-				})
+			await this.retryUnprocessed<NonNullable<BatchWriteCommandInput['RequestItems']>>(
+				{
+					[this.table]: _.map(chunk, item => {
+						return {
+							PutRequest: { Item: item }
+						};
+					})
+				},
+				async requestItems => {
+					const res = await this.client.send(new BatchWriteCommand({ RequestItems: requestItems }));
+
+					return res.UnprocessedItems ?? {};
+				}
 			);
 
 			await this.notifyChanges(
@@ -633,22 +614,10 @@ class Dynamodb<T extends Dict = Dict> {
 				};
 
 				if (_.size(options.select) > 0) {
-					getCommandInput.ExpressionAttributeNames = {
-						...getCommandInput.ExpressionAttributeNames,
-						..._.reduce(
-							options.select,
-							(reduction, attr, index) => {
-								reduction[`#__pe${index + 1}`] = attr;
+					const { attributeNames, projectionExpression } = this.getProjection(options.select);
 
-								return reduction;
-							},
-							{} as Record<string, string>
-						)
-					};
-
-					getCommandInput.ProjectionExpression = _.map(options.select, (attr, index) => {
-						return `#__pe${index + 1}`;
-					}).join(', ');
+					getCommandInput.ExpressionAttributeNames = attributeNames;
+					getCommandInput.ProjectionExpression = projectionExpression;
 				}
 
 				const res = await this.client.send(new GetCommand(getCommandInput));
@@ -693,6 +662,26 @@ class Dynamodb<T extends Dict = Dict> {
 		return this.getSchemaKeys(lastItem);
 	}
 
+	private getProjection(select: string[] = [], index?: string) {
+		const projectionAttributes = this.getProjectionAttributes(select, index);
+		const placeholders = _.times(_.size(projectionAttributes), position => {
+			return `#__pe${position + 1}`;
+		});
+
+		return {
+			attributeNames: _.zipObject(placeholders, projectionAttributes),
+			projectionExpression: placeholders.join(', ')
+		};
+	}
+
+	private getProjectionAttributes(select: string[], index?: string): string[] {
+		const matchedIndex = _.find(this.indexes, tableIndex => {
+			return tableIndex.name === index;
+		});
+
+		return _.compact(_.union(select, [this.schema.partition, this.schema.sort], [matchedIndex?.partition, matchedIndex?.sort]));
+	}
+
 	private getSchemaKeys(item: Dict, index?: string) {
 		if (index) {
 			const matchedIndex = _.find(this.indexes, { name: index });
@@ -715,7 +704,7 @@ class Dynamodb<T extends Dict = Dict> {
 			consistentRead: options.consistentRead,
 			item: { [this.schema.partition]: options.partitionKey },
 			limit: Infinity,
-			select: [this.schema.partition, this.schema.sort!]
+			select: [this.schema.sort!]
 		});
 
 		if (sortKeysResponse.count === 0) {
@@ -855,25 +844,6 @@ class Dynamodb<T extends Dict = Dict> {
 			queryCommandInput.IndexName = options.index;
 		}
 
-		if (_.size(options.select) > 0) {
-			queryCommandInput.ExpressionAttributeNames = {
-				...queryCommandInput.ExpressionAttributeNames,
-				..._.reduce(
-					options.select,
-					(reduction, attr, index) => {
-						reduction[`#__pe${index + 1}`] = attr;
-
-						return reduction;
-					},
-					{} as Record<string, string>
-				)
-			};
-
-			queryCommandInput.ProjectionExpression = _.map(options.select, (attr, index) => {
-				return `#__pe${index + 1}`;
-			}).join(', ');
-		}
-
 		if (options.startKey) {
 			queryCommandInput.ExclusiveStartKey = options.startKey;
 		}
@@ -925,6 +895,13 @@ class Dynamodb<T extends Dict = Dict> {
 			}
 		} else if (options.queryExpression) {
 			queryCommandInput.KeyConditionExpression = options.queryExpression;
+		}
+
+		if (_.size(options.select) > 0) {
+			const { attributeNames, projectionExpression } = this.getProjection(options.select, queryCommandInput.IndexName);
+
+			queryCommandInput.ExpressionAttributeNames = { ...queryCommandInput.ExpressionAttributeNames, ...attributeNames };
+			queryCommandInput.ProjectionExpression = projectionExpression;
 		}
 
 		if (!_.isUndefined(options.scanIndexForward)) {
@@ -1143,6 +1120,24 @@ class Dynamodb<T extends Dict = Dict> {
 		return { index: '', schema: { partition: '', sort: '' } };
 	}
 
+	private async retryUnprocessed<I extends Dict>(requestItems: I, send: (requestItems: I) => Promise<I>) {
+		let attempts = 1;
+		let unprocessedItems = await send(requestItems);
+
+		while (_.size(unprocessedItems) > 0) {
+			if (attempts === BATCH_RETRY_MAX_ATTEMPTS) {
+				throw new Error('Batch request has unprocessed items');
+			}
+
+			await new Promise(resolve => {
+				setTimeout(resolve, BATCH_RETRY_BASE_DELAY * 2 ** (attempts - 1));
+			});
+
+			attempts += 1;
+			unprocessedItems = await send(unprocessedItems);
+		}
+	}
+
 	async scan<R extends Dict = T>(options?: Dynamodb.ScanOptions<R>): Promise<Dynamodb.MultiResponse<R>> {
 		options = _.defaults({}, options, {
 			chunkLimit: Infinity,
@@ -1181,22 +1176,10 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		if (_.size(options.select) > 0) {
-			scanCommandInput.ExpressionAttributeNames = {
-				...scanCommandInput.ExpressionAttributeNames,
-				..._.reduce(
-					options.select,
-					(reduction, attr, index) => {
-						reduction[`#__pe${index + 1}`] = attr;
+			const { attributeNames, projectionExpression } = this.getProjection(options.select, scanCommandInput.IndexName);
 
-						return reduction;
-					},
-					{} as Record<string, string>
-				)
-			};
-
-			scanCommandInput.ProjectionExpression = _.map(options.select, (attr, index) => {
-				return `#__pe${index + 1}`;
-			}).join(', ');
+			scanCommandInput.ExpressionAttributeNames = { ...scanCommandInput.ExpressionAttributeNames, ...attributeNames };
+			scanCommandInput.ProjectionExpression = projectionExpression;
 		}
 
 		if (options.startKey) {
