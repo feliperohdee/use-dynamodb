@@ -26,8 +26,6 @@ const factory = () => {
 	return new Db<DbRecord>({
 		accessKeyId: 'test',
 		endpoint: ENDPOINT,
-		region: 'us-east-1',
-		secretAccessKey: 'test',
 		indexes: [
 			{
 				name: 'gs-index',
@@ -36,7 +34,9 @@ const factory = () => {
 				sortType: 'S'
 			}
 		],
+		region: 'us-east-1',
 		schema: { partition: 'pk' },
+		secretAccessKey: 'test',
 		table: 'use-dynamodb-no-sort-spec'
 	});
 };
@@ -58,20 +58,6 @@ describe('/index-no-sort.ts', () => {
 
 	beforeEach(() => {
 		db = factory();
-	});
-
-	describe('createTable', () => {
-		it('should works', async () => {
-			const res = await db.createTable();
-
-			if ('Table' in res) {
-				expect(res.Table?.TableName).toEqual('use-dynamodb-no-sort-spec');
-			} else if ('TableDescription' in res) {
-				expect(res.TableDescription?.TableName).toEqual('use-dynamodb-no-sort-spec');
-			} else {
-				throw new Error('Table not created');
-			}
-		});
 	});
 
 	describe('batchGet / batchWrite / batchDelete', () => {
@@ -111,19 +97,6 @@ describe('/index-no-sort.ts', () => {
 			await db.clear();
 		});
 
-		it('should clear', async () => {
-			await db.batchWrite(createItems({ count: 2 }));
-
-			const res1 = await db.scan();
-			expect(res1.count).toEqual(2);
-
-			const { count } = await db.clear();
-			expect(count).toEqual(2);
-
-			const res2 = await db.scan();
-			expect(res2.count).toEqual(0);
-		});
-
 		it('should clear by pk', async () => {
 			await db.batchWrite(createItems({ count: 2 }));
 
@@ -136,6 +109,33 @@ describe('/index-no-sort.ts', () => {
 			const res2 = await db.scan();
 			expect(res2.count).toEqual(1);
 		});
+
+		it('should clear', async () => {
+			await db.batchWrite(createItems({ count: 2 }));
+
+			const res1 = await db.scan();
+			expect(res1.count).toEqual(2);
+
+			const { count } = await db.clear();
+			expect(count).toEqual(2);
+
+			const res2 = await db.scan();
+			expect(res2.count).toEqual(0);
+		});
+	});
+
+	describe('createTable', () => {
+		it('should create or describe the table', async () => {
+			const res = await db.createTable();
+
+			if ('Table' in res) {
+				expect(res.Table?.TableName).toEqual('use-dynamodb-no-sort-spec');
+			} else if ('TableDescription' in res) {
+				expect(res.TableDescription?.TableName).toEqual('use-dynamodb-no-sort-spec');
+			} else {
+				throw new Error('Table not created');
+			}
+		});
 	});
 
 	describe('delete', () => {
@@ -143,7 +143,10 @@ describe('/index-no-sort.ts', () => {
 			await db.batchWrite(createItems({ count: 1 }));
 
 			vi.spyOn(db, 'get');
-			vi.spyOn(db.client, 'send');
+		});
+
+		afterEach(() => {
+			vi.restoreAllMocks();
 		});
 
 		afterAll(async () => {
@@ -250,14 +253,6 @@ describe('/index-no-sort.ts', () => {
 			await db.clear();
 		});
 
-		it('should return null if not found', async () => {
-			const res = await db.get({
-				item: { pk: 'pk-100' }
-			});
-
-			expect(res).toBeNull();
-		});
-
 		it('should get', async () => {
 			const res = await db.get({
 				item: { pk: 'pk-0' }
@@ -272,13 +267,17 @@ describe('/index-no-sort.ts', () => {
 				})
 			);
 		});
+
+		it('should return null if not found', async () => {
+			const res = await db.get({
+				item: { pk: 'pk-100' }
+			});
+
+			expect(res).toBeNull();
+		});
 	});
 
 	describe('put', () => {
-		beforeEach(() => {
-			vi.spyOn(db.client, 'send');
-		});
-
 		afterAll(async () => {
 			await db.clear();
 		});
@@ -320,10 +319,10 @@ describe('/index-no-sort.ts', () => {
 			const newItem = await db.replace({ pk: 'pk-1' }, replacedItem);
 
 			expect(newItem).toEqual({
-				pk: 'pk-1',
 				__createdAt: replacedItem.__createdAt,
 				__ts: newItem.__ts,
-				__updatedAt: newItem.__updatedAt
+				__updatedAt: newItem.__updatedAt,
+				pk: 'pk-1'
 			});
 		});
 	});
@@ -337,10 +336,6 @@ describe('/index-no-sort.ts', () => {
 			await db.clear();
 		});
 
-		beforeEach(() => {
-			vi.spyOn(db.client, 'send');
-		});
-
 		it('should scan until limit with onChunk', async () => {
 			const onChunk = vi.fn();
 			const { items, count, lastEvaluatedKey } = await db.scan({
@@ -352,7 +347,6 @@ describe('/index-no-sort.ts', () => {
 
 			expect(count).toEqual(2);
 
-			vi.mocked(db.client.send).mockClear();
 			const { items: items2, count: count2 } = await db.scan({
 				startKey: lastEvaluatedKey
 			});
@@ -365,6 +359,29 @@ describe('/index-no-sort.ts', () => {
 	describe('update', () => {
 		afterEach(async () => {
 			await db.clear();
+		});
+
+		it('should upsert', async () => {
+			const res = await db.update({
+				filter: {
+					item: { pk: 'pk-0' }
+				},
+				updateFunction: item => {
+					return {
+						...item,
+						foo: 'foo-1'
+					};
+				},
+				upsert: true
+			});
+
+			expect(res.__createdAt).toEqual(res.__updatedAt);
+			expect(res).toEqual(
+				expect.objectContaining({
+					foo: 'foo-1',
+					pk: 'pk-0'
+				})
+			);
 		});
 
 		it('should update', async () => {
@@ -390,29 +407,6 @@ describe('/index-no-sort.ts', () => {
 					foo: 'foo-1',
 					gsiPk: 'gsi-pk-0',
 					gsiSk: 'gsi-sk-0',
-					pk: 'pk-0'
-				})
-			);
-		});
-
-		it('should upsert', async () => {
-			const res = await db.update({
-				filter: {
-					item: { pk: 'pk-0' }
-				},
-				updateFunction: item => {
-					return {
-						...item,
-						foo: 'foo-1'
-					};
-				},
-				upsert: true
-			});
-
-			expect(res.__createdAt).toEqual(res.__updatedAt);
-			expect(res).toEqual(
-				expect.objectContaining({
-					foo: 'foo-1',
 					pk: 'pk-0'
 				})
 			);

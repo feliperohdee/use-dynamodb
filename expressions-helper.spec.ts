@@ -4,7 +4,7 @@ import { concatConditionExpression, concatUpdateExpression } from './expressions
 
 describe('/expressions-helper.ts', () => {
 	describe('concatConditionExpression', () => {
-		it('should works', () => {
+		it('should concat condition expressions', () => {
 			expect(concatConditionExpression('a  ', '  b')).toEqual('a AND b');
 			expect(concatConditionExpression('a  ', '  OR b')).toEqual('a OR b');
 			expect(concatConditionExpression('a  ', '')).toEqual('a');
@@ -12,7 +12,7 @@ describe('/expressions-helper.ts', () => {
 	});
 
 	describe('concatUpdateExpression', () => {
-		it('should works', () => {
+		it('should concat update expressions', () => {
 			expect(concatUpdateExpression('#a = :a,', '')).toEqual('SET #a = :a');
 			expect(concatUpdateExpression('#a = :a,', 'b = :b')).toEqual('SET #a = :a, b = :b');
 			expect(concatUpdateExpression('SET #a = :a,', 'SET b = :b,c = :c,')).toEqual('SET #a = :a, b = :b, c = :c');

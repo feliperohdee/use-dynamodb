@@ -489,6 +489,153 @@ class Dynamodb<T extends Dict = Dict> {
 		return { count };
 	}
 
+	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {
+		try {
+			return await this.client.send(
+				new DescribeTableCommand({
+					TableName: this.table
+				})
+			);
+		} catch (err) {
+			const inexistentTable =
+				_.includes((err as Error).message, 'resource not found') || _.includes((err as Error).message, 'non-existent table');
+
+			if (inexistentTable) {
+				const gsi = _.filter(this.indexes, index => {
+					return index.forceGlobal || index.partition !== this.schema.partition;
+				});
+
+				const globalIndexes = _.map(gsi, index => {
+					const projection: {
+						ProjectionType: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
+						NonKeyAttributes?: string[];
+					} = {
+						ProjectionType: index.projection?.type || 'ALL'
+					};
+
+					if (index.projection?.type === 'INCLUDE') {
+						projection.NonKeyAttributes = index.projection.nonKeyAttributes;
+					}
+
+					return {
+						IndexName: index.name,
+						KeySchema: _.compact([
+							{
+								AttributeName: index.partition,
+								KeyType: 'HASH'
+							},
+							index.sort
+								? {
+										AttributeName: index.sort,
+										KeyType: 'RANGE'
+									}
+								: null
+						]),
+						Projection: projection
+					};
+				}) as GlobalSecondaryIndex[];
+
+				const globalIndexesDefinitions = _.flatMap(gsi, index => {
+					return _.compact([
+						{
+							AttributeName: index.partition,
+							AttributeType: index.partitionType || 'S'
+						},
+						index.sort
+							? {
+									AttributeName: index.sort,
+									AttributeType: index.sortType || 'S'
+								}
+							: null
+					]);
+				}) as AttributeDefinition[];
+
+				const lsi = _.filter(this.indexes, index => {
+					return !index.forceGlobal && index.partition === this.schema.partition;
+				});
+
+				const localIndexes = _.map(lsi, index => {
+					const projection: {
+						ProjectionType: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
+						NonKeyAttributes?: string[];
+					} = {
+						ProjectionType: index.projection?.type || 'ALL'
+					};
+
+					if (index.projection?.type === 'INCLUDE') {
+						projection.NonKeyAttributes = index.projection.nonKeyAttributes;
+					}
+
+					return {
+						IndexName: index.name,
+						KeySchema: [
+							{
+								AttributeName: this.schema.partition,
+								KeyType: 'HASH'
+							},
+							{
+								AttributeName: index.sort,
+								KeyType: 'RANGE'
+							}
+						],
+						Projection: projection
+					};
+				}) as LocalSecondaryIndex[];
+
+				const localIndexesDefinitions = _.map(lsi, index => {
+					return {
+						AttributeName: index.sort,
+						AttributeType: index.sortType || 'S'
+					};
+				}) as AttributeDefinition[];
+
+				const baseDefinitions = _.compact([
+					{
+						AttributeName: this.schema.partition,
+						AttributeType: 'S'
+					},
+					this.schema.sort
+						? {
+								AttributeName: this.schema.sort,
+								AttributeType: this.schema.sortType || 'S'
+							}
+						: null
+				]) as AttributeDefinition[];
+
+				const commandInput: CreateTableCommandInput = {
+					AttributeDefinitions: _.uniqBy([...baseDefinitions, ...globalIndexesDefinitions, ...localIndexesDefinitions], 'AttributeName'),
+					BillingMode: 'PAY_PER_REQUEST',
+					KeySchema: _.compact([
+						{
+							AttributeName: this.schema.partition,
+							KeyType: 'HASH'
+						},
+						this.schema.sort
+							? {
+									AttributeName: this.schema.sort,
+									KeyType: 'RANGE'
+								}
+							: null
+					]),
+					TableName: this.table
+				};
+
+				if (_.size(globalIndexes)) {
+					commandInput.GlobalSecondaryIndexes = globalIndexes;
+				}
+
+				if (_.size(localIndexes)) {
+					commandInput.LocalSecondaryIndexes = localIndexes;
+				}
+
+				// @ts-ignore-next-line
+				return this.client.send(new CreateTableCommand(commandInput));
+			}
+		}
+
+		return {} as DescribeTableCommandOutput;
+	}
+
 	async delete<R extends Dict = T>(options: Dynamodb.DeleteOptions): Promise<Dynamodb.PersistedItem<R> | null> {
 		const currentItem = await this.get(options.filter);
 
@@ -684,7 +831,9 @@ class Dynamodb<T extends Dict = Dict> {
 
 	private getSchemaKeys(item: Dict, index?: string) {
 		if (index) {
-			const matchedIndex = _.find(this.indexes, { name: index });
+			const matchedIndex = _.find(this.indexes, tableIndex => {
+				return tableIndex.name === index;
+			});
 
 			if (matchedIndex) {
 				return _.pick(item, _.compact([matchedIndex.partition, matchedIndex.sort]));
@@ -733,12 +882,12 @@ class Dynamodb<T extends Dict = Dict> {
 	}
 
 	private getStringIndexAttributes(): string[] {
-		const stringKeys: string[] = [];
+		let stringKeys: string[] = [];
 
 		// Add index sort keys that are string type
 		for (const index of this.indexes) {
 			if (index.sort && (!index.sortType || index.sortType === 'S')) {
-				stringKeys.push(index.sort);
+				stringKeys = [...stringKeys, index.sort];
 			}
 		}
 
@@ -1402,19 +1551,6 @@ class Dynamodb<T extends Dict = Dict> {
 		return output;
 	}
 
-	private transformFromStorage(item: Dict): Dict {
-		const stringKeyAttributes = this.getStringIndexAttributes();
-		const transformedItem = _.cloneDeep(item);
-
-		for (const key of stringKeyAttributes) {
-			if (transformedItem[key] === this.emptyStringPlaceholder) {
-				transformedItem[key] = '';
-			}
-		}
-
-		return transformedItem;
-	}
-
 	private transformForStorage(item: Dict): Dict {
 		const stringKeyAttributes = this.getStringIndexAttributes();
 		const transformedItem = _.cloneDeep(item);
@@ -1422,6 +1558,19 @@ class Dynamodb<T extends Dict = Dict> {
 		for (const key of stringKeyAttributes) {
 			if (transformedItem[key] === '') {
 				transformedItem[key] = this.emptyStringPlaceholder;
+			}
+		}
+
+		return transformedItem;
+	}
+
+	private transformFromStorage(item: Dict): Dict {
+		const stringKeyAttributes = this.getStringIndexAttributes();
+		const transformedItem = _.cloneDeep(item);
+
+		for (const key of stringKeyAttributes) {
+			if (transformedItem[key] === this.emptyStringPlaceholder) {
+				transformedItem[key] = '';
 			}
 		}
 
@@ -1481,8 +1630,8 @@ class Dynamodb<T extends Dict = Dict> {
 			updateCommandInput.ExpressionAttributeValues = {
 				...updateCommandInput.ExpressionAttributeValues,
 				':__cr': nowISO,
-				':__up': nowISO,
-				':__ts': ts
+				':__ts': ts,
+				':__up': nowISO
 			};
 
 			if (options.conditionExpression) {
@@ -1586,153 +1735,6 @@ class Dynamodb<T extends Dict = Dict> {
 		}
 
 		return this.put(updatedItem, putOptions);
-	}
-
-	async createTable(): Promise<DescribeTableCommandOutput | CreateTableCommandOutput> {
-		try {
-			return await this.client.send(
-				new DescribeTableCommand({
-					TableName: this.table
-				})
-			);
-		} catch (err) {
-			const inexistentTable =
-				_.includes((err as Error).message, 'resource not found') || _.includes((err as Error).message, 'non-existent table');
-
-			if (inexistentTable) {
-				const gsi = _.filter(this.indexes, index => {
-					return index.forceGlobal || index.partition !== this.schema.partition;
-				});
-
-				const globalIndexes = _.map(gsi, index => {
-					const projection: {
-						ProjectionType: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
-						NonKeyAttributes?: string[];
-					} = {
-						ProjectionType: index.projection?.type || 'ALL'
-					};
-
-					if (index.projection?.type === 'INCLUDE') {
-						projection.NonKeyAttributes = index.projection.nonKeyAttributes;
-					}
-
-					return {
-						IndexName: index.name,
-						KeySchema: _.compact([
-							{
-								AttributeName: index.partition,
-								KeyType: 'HASH'
-							},
-							index.sort
-								? {
-										AttributeName: index.sort,
-										KeyType: 'RANGE'
-									}
-								: null
-						]),
-						Projection: projection
-					};
-				}) as GlobalSecondaryIndex[];
-
-				const globalIndexesDefinitions = _.flatMap(gsi, index => {
-					return _.compact([
-						{
-							AttributeName: index.partition,
-							AttributeType: index.partitionType || 'S'
-						},
-						index.sort
-							? {
-									AttributeName: index.sort,
-									AttributeType: index.sortType || 'S'
-								}
-							: null
-					]);
-				}) as AttributeDefinition[];
-
-				const lsi = _.filter(this.indexes, index => {
-					return !index.forceGlobal && index.partition === this.schema.partition;
-				});
-
-				const localIndexes = _.map(lsi, index => {
-					const projection: {
-						ProjectionType: 'ALL' | 'KEYS_ONLY' | 'INCLUDE';
-						NonKeyAttributes?: string[];
-					} = {
-						ProjectionType: index.projection?.type || 'ALL'
-					};
-
-					if (index.projection?.type === 'INCLUDE') {
-						projection.NonKeyAttributes = index.projection.nonKeyAttributes;
-					}
-
-					return {
-						IndexName: index.name,
-						KeySchema: [
-							{
-								AttributeName: this.schema.partition,
-								KeyType: 'HASH'
-							},
-							{
-								AttributeName: index.sort,
-								KeyType: 'RANGE'
-							}
-						],
-						Projection: projection
-					};
-				}) as LocalSecondaryIndex[];
-
-				const localIndexesDefinitions = _.map(lsi, index => {
-					return {
-						AttributeName: index.sort,
-						AttributeType: index.sortType || 'S'
-					};
-				}) as AttributeDefinition[];
-
-				const baseDefinitions = _.compact([
-					{
-						AttributeName: this.schema.partition,
-						AttributeType: 'S'
-					},
-					this.schema.sort
-						? {
-								AttributeName: this.schema.sort,
-								AttributeType: this.schema.sortType || 'S'
-							}
-						: null
-				]) as AttributeDefinition[];
-
-				const commandInput: CreateTableCommandInput = {
-					AttributeDefinitions: _.uniqBy([...baseDefinitions, ...globalIndexesDefinitions, ...localIndexesDefinitions], 'AttributeName'),
-					BillingMode: 'PAY_PER_REQUEST',
-					KeySchema: _.compact([
-						{
-							AttributeName: this.schema.partition,
-							KeyType: 'HASH'
-						},
-						this.schema.sort
-							? {
-									AttributeName: this.schema.sort,
-									KeyType: 'RANGE'
-								}
-							: null
-					]),
-					TableName: this.table
-				};
-
-				if (_.size(globalIndexes)) {
-					commandInput.GlobalSecondaryIndexes = globalIndexes;
-				}
-
-				if (_.size(localIndexes)) {
-					commandInput.LocalSecondaryIndexes = localIndexes;
-				}
-
-				// @ts-ignore-next-line
-				return this.client.send(new CreateTableCommand(commandInput));
-			}
-		}
-
-		return {} as DescribeTableCommandOutput;
 	}
 }
 
