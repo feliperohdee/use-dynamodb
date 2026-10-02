@@ -1551,7 +1551,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return output;
 	}
 
-	private transformForStorage(item: Dict): Dict {
+	transformForStorage(item: Dict): Dict {
 		const stringKeyAttributes = this.getStringIndexAttributes();
 		const transformedItem = _.cloneDeep(item);
 
@@ -1564,7 +1564,7 @@ class Dynamodb<T extends Dict = Dict> {
 		return transformedItem;
 	}
 
-	private transformFromStorage(item: Dict): Dict {
+	transformFromStorage(item: Dict): Dict {
 		const stringKeyAttributes = this.getStringIndexAttributes();
 		const transformedItem = _.cloneDeep(item);
 

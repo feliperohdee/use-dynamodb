@@ -3273,7 +3273,6 @@ describe('/index.ts', () => {
 				sk: ''
 			};
 
-			// @ts-expect-error
 			const res = db.transformForStorage(item);
 			expect(res).toEqual({
 				foo: 'test-value',
@@ -3295,7 +3294,6 @@ describe('/index.ts', () => {
 				sk: 'non-empty'
 			};
 
-			// @ts-expect-error
 			const res = db.transformForStorage(item);
 			expect(res).toEqual(item);
 		});
@@ -3310,7 +3308,6 @@ describe('/index.ts', () => {
 				sk: 'test-sk'
 			};
 
-			// @ts-expect-error
 			const res = db.transformForStorage(item);
 			expect(res).toEqual(item);
 		});
@@ -3327,7 +3324,6 @@ describe('/index.ts', () => {
 				sk: '__EMPTY_STRING__'
 			};
 
-			// @ts-expect-error
 			const res = db.transformFromStorage(item);
 			expect(res).toEqual({
 				foo: 'test-value',
@@ -3349,7 +3345,6 @@ describe('/index.ts', () => {
 				sk: 'non-placeholder'
 			};
 
-			// @ts-expect-error
 			const res = db.transformFromStorage(item);
 			expect(res).toEqual(item);
 		});
@@ -3364,7 +3359,6 @@ describe('/index.ts', () => {
 				sk: 'test-sk'
 			};
 
-			// @ts-expect-error
 			const res = db.transformFromStorage(item);
 			expect(res).toEqual(item);
 		});
