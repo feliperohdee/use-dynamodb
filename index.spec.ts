@@ -824,6 +824,7 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: {
+						ConsistentRead: false,
 						ExpressionAttributeNames: {
 							'#__pe1': 'foo',
 							'#__pe2': 'gsiPk',
@@ -856,6 +857,38 @@ describe('/index.ts', () => {
 			expect(db.client.send).toHaveBeenCalledWith(
 				expect.objectContaining({
 					input: {
+						ConsistentRead: false,
+						Key: {
+							pk: 'pk-0',
+							sk: 'sk-000'
+						},
+						TableName: 'use-dynamodb-spec'
+					}
+				})
+			);
+
+			expect(res).toEqual(
+				expect.objectContaining({
+					foo: 'foo-0',
+					gsiPk: 'gsi-pk-0',
+					gsiSk: 'gsi-sk-000',
+					lsiSk: 'lsi-sk-000',
+					pk: 'pk-0',
+					sk: 'sk-000'
+				})
+			);
+		});
+
+		it('should get with consistent read', async () => {
+			const res = await db.get({
+				item: { pk: 'pk-0', sk: 'sk-000' },
+				consistentRead: true
+			});
+
+			expect(db.client.send).toHaveBeenCalledWith(
+				expect.objectContaining({
+					input: {
+						ConsistentRead: true,
 						Key: {
 							pk: 'pk-0',
 							sk: 'sk-000'

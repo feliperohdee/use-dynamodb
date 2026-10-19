@@ -756,6 +756,7 @@ class Dynamodb<T extends Dict = Dict> {
 				(this.schema.partition && !this.schema.sort && options.item[this.schema.partition])
 			) {
 				const getCommandInput: GetCommandInput = {
+					ConsistentRead: options.consistentRead ?? false,
 					Key: this.getSchemaKeys(this.transformForStorage(options.item)),
 					TableName: this.table
 				};
